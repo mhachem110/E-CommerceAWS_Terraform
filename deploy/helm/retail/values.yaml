@@ -1,0 +1,60 @@
+# Local Docker Desktop Kubernetes defaults. Supply different images and data
+# services before using this chart in AWS.
+replicaCount: 1
+imagePullPolicy: Never
+resources:
+  requests:
+    cpu: 25m
+    memory: 64Mi
+  limits:
+    cpu: 250m
+    memory: 256Mi
+
+services:
+  - name: product
+    image: retail-product:local
+    port: 8000
+    healthPath: /health
+    env:
+      DB_PATH: /data/product.db
+    persistence:
+      size: 1Gi
+
+  - name: inventory
+    image: retail-inventory:local
+    port: 8000
+    healthPath: /health
+    env:
+      DB_PATH: /data/inventory.db
+    persistence:
+      size: 1Gi
+
+  - name: order
+    image: retail-order:local
+    port: 8000
+    healthPath: /health
+    env:
+      DB_PATH: /data/order.db
+      PRODUCT_URL: "http://{{ .Release.Name }}-product:8000"
+      INVENTORY_URL: "http://{{ .Release.Name }}-inventory:8000"
+      NOTIFICATION_URL: "http://{{ .Release.Name }}-notification:8000"
+    persistence:
+      size: 1Gi
+
+  - name: notification
+    image: retail-notification:local
+    port: 8000
+    healthPath: /health
+    env:
+      DB_PATH: /data/notification.db
+    persistence:
+      size: 1Gi
+
+  - name: storefront
+    image: retail-storefront:local
+    port: 8080
+    healthPath: /
+    env:
+      PRODUCT_HOST: "{{ .Release.Name }}-product"
+      ORDER_HOST: "{{ .Release.Name }}-order"
+      NGINX_ENVSUBST_FILTER: "^(PRODUCT_HOST|ORDER_HOST)$"

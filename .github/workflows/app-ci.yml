@@ -31,3 +31,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t retail-storefront:ci frontend
+      - run: docker run --rm -e PRODUCT_HOST=product -e ORDER_HOST=order -e 'NGINX_ENVSUBST_FILTER=^(PRODUCT_HOST|ORDER_HOST)$' retail-storefront:ci nginx -t
+
+  helm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v5
+        with:
+          version: v3.18.4
+      - run: helm lint deploy/helm/retail
+      - run: helm template retail deploy/helm/retail > rendered.yaml

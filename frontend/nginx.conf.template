@@ -5,12 +5,12 @@ server {
     index index.html;
 
     location /api/products {
-        proxy_pass http://product:8000/products;
+        proxy_pass http://${PRODUCT_HOST}:8000/products;
         proxy_set_header X-Request-ID $request_id;
     }
 
     location /api/orders {
-        proxy_pass http://order:8000/orders;
+        proxy_pass http://${ORDER_HOST}:8000/orders;
         proxy_set_header X-Request-ID $request_id;
     }
 

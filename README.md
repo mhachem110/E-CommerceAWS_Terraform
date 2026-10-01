@@ -38,6 +38,25 @@ python -m venv .venv
 
 The test starts all four real HTTP services on temporary local ports. It checks a confirmed order, stock reduction, the receipt record, repeated checkout, key conflict, and insufficient stock.
 
+## Run the same app on local Kubernetes with Helm
+
+This step follows the trainer's local-cluster practice. Enable Kubernetes in Docker Desktop, select its context (`kubectl config use-context docker-desktop`), and make sure `kubectl get nodes` works. Build the five images into Docker Desktop's image store:
+
+```powershell
+foreach ($service in 'product','inventory','order','notification') {
+  docker build --build-arg SERVICE=$service -t "retail-${service}:local" backend
+}
+docker build -t retail-storefront:local frontend
+helm lint deploy/helm/retail
+helm template retail deploy/helm/retail
+helm upgrade --install retail deploy/helm/retail --namespace retail --create-namespace --wait
+kubectl -n retail port-forward svc/retail-storefront 8080:8080
+```
+
+Open [http://localhost:8080](http://localhost:8080). In another terminal, run `kubectl -n retail get pods,svc,pvc` and `helm -n retail history retail`. The chart keeps backend Services private (`ClusterIP`) and uses local persistent claims for the four SQLite databases; the local cluster needs a default StorageClass. This chart deliberately uses one replica per SQLite-backed service. Do not scale those services until the managed data stores replace SQLite. To remove the demo release, run `helm -n retail uninstall retail`; PVCs may remain for the local test data.
+
+The chart's `values.yaml` holds the images, port numbers, service addresses, resources, and replica count. Helm renders `templates/` into ordinary Kubernetes manifests and tracks each release revision. Use `helm upgrade --install` for this chart; applying the template files directly with `kubectl apply` will not resolve `{{ ... }}` expressions. [Helm chart guide](https://helm.sh/docs/topics/charts/)
+
 ## Repository map
 
 | Path | Purpose |
@@ -48,6 +67,8 @@ The test starts all four real HTTP services on temporary local ports. It checks 
 | `backend/services/order.py` | Checkout and order status API |
 | `backend/services/notification.py` | Idempotent notification record API |
 | `compose.yaml` | Local containers, private network, and persistent demo data |
+| `deploy/helm/retail/` | Reusable local Kubernetes chart for the five workloads |
+| `docs/service-map.md` | Current service calls and planned AWS event, permission, and network paths |
 | `tests/` | End-to-end HTTP flow test |
 | `.github/workflows/app-ci.yml` | App tests and image builds on PRs; no Terraform apply |
 
@@ -55,4 +76,4 @@ The test starts all four real HTTP services on temporary local ports. It checks 
 
 The four SQLite files are **local test substitutes**. No payment is collected and no actual email is sent. Order processing currently uses direct HTTP calls; it does not yet use EventBridge or SQS. The APIs have no customer authentication, so this is for local development only and must not be exposed publicly as a production shop.
 
-Next stages: replace Product and Order storage with RDS/Aurora MySQL; replace Inventory and Notification storage with DynamoDB; add ElastiCache for catalog reads; move the order events to EventBridge and SQS with retries and DLQs; then add Kubernetes/Helm, EKS, ECR, Terraform, OIDC delivery, security, and monitoring. The frontend remains the public entry point. App PRs will run app checks and builds; Terraform changes will have their own reviewed infrastructure workflow in a separately permissioned infrastructure repository.
+Next stages: replace Product and Order storage with RDS/Aurora MySQL; replace Inventory and Notification storage with DynamoDB; add ElastiCache for catalog reads; move the order events to EventBridge and SQS with retries and DLQs; then add EKS, ECR, Terraform, OIDC delivery, security, and monitoring. The frontend remains the public entry point. App PRs run app checks, image builds, and Helm validation; Terraform changes will have their own reviewed infrastructure workflow in a separately permissioned infrastructure repository. The planned AWS connections are in [`docs/service-map.md`](docs/service-map.md).

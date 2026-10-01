@@ -58,6 +58,10 @@ services:
 
   storefront:
     build: ./frontend
+    environment:
+      PRODUCT_HOST: product
+      ORDER_HOST: order
+      NGINX_ENVSUBST_FILTER: '^(PRODUCT_HOST|ORDER_HOST)$'
     ports:
       - "8080:8080"
     depends_on:
