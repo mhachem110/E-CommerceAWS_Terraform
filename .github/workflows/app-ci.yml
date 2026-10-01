@@ -1,0 +1,33 @@
+name: App CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m pytest -q
+
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [product, inventory, order, notification]
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build --build-arg SERVICE=${{ matrix.service }} -t retail-${{ matrix.service }}:ci backend
+
+  storefront:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t retail-storefront:ci frontend

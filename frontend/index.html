@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#12332a">
+  <title>Field & Form | Retail Demo</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/" aria-label="Field and Form home"><span class="brand-mark">F<span>+</span>F</span><span>FIELD & FORM</span></a>
+    <span class="header-note">A small shop for everyday things</span>
+    <a class="header-link" href="#checkout">Checkout <span aria-hidden="true">↗</span></a>
+  </header>
+
+  <main>
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <p class="eyebrow">THE WEEK 3 RETAIL DEMO</p>
+        <h1 id="hero-title">Good things,<br><em>simple shopping.</em></h1>
+        <p class="hero-description">Choose an everyday essential, place a test order, and watch the services work together.</p>
+        <a class="button button-light" href="#collection">Explore the collection <span aria-hidden="true">↓</span></a>
+      </div>
+      <div class="hero-art" aria-hidden="true"><span class="hero-art-circle"></span><span class="hero-art-icon">✳</span><span class="hero-art-caption">CURATED FOR YOUR DAY</span></div>
+    </section>
+
+    <section class="collection section-wrap" id="collection" aria-labelledby="collection-title">
+      <div class="section-heading"><div><p class="eyebrow dark">01 / THE COLLECTION</p><h2 id="collection-title">The essentials</h2></div><p>Three useful things. One simple checkout.</p></div>
+      <div id="products" class="product-grid" aria-live="polite"><p>Loading products…</p></div>
+    </section>
+
+    <section class="checkout-section" id="checkout" aria-labelledby="checkout-title">
+      <div class="section-wrap checkout-grid">
+        <div class="checkout-intro"><p class="eyebrow dark">02 / CHECKOUT</p><h2 id="checkout-title">Make it yours.</h2><p>This is a project demo. Orders are recorded locally, inventory is reserved, and a notification record is created. No payment is collected and no email is sent.</p><div class="flow"><span>Product</span><b>→</b><span>Order</span><b>→</b><span>Inventory</span><b>→</b><span>Notification</span></div></div>
+        <form id="checkout-form" class="checkout-card">
+          <label for="product">Product</label><select id="product" name="product_id" required><option value="">Loading products…</option></select>
+          <div class="form-row"><div><label for="quantity">Quantity</label><input id="quantity" name="quantity" type="number" min="1" max="99" value="1" required></div><div class="total-block"><span>Estimated total</span><strong id="total">$0.00</strong></div></div>
+          <label for="email">Email for receipt record</label><input id="email" name="email" type="email" placeholder="you@example.com" autocomplete="email" required>
+          <button class="button button-dark" id="submit" type="submit">Place test order <span aria-hidden="true">→</span></button>
+          <p class="form-footnote">Demo only · No payment or real email</p>
+          <div id="result" class="result" role="status" aria-live="polite" hidden></div>
+        </form>
+      </div>
+    </section>
+  </main>
+  <footer><span>FIELD & FORM</span><span>Retail microservices learning project</span></footer>
+</body>
+</html>
