@@ -2,6 +2,8 @@
 
 A small ecommerce demo for the Week 3 EKS project. It has one storefront and four independent backend services. This stage proves the shopping flow locally before adding AWS infrastructure.
 
+The Docker Compose app has been run and verified locally. For a simple, step-by-step explanation of what happens when you place an order, read the [local walkthrough](docs/local-walkthrough.md).
+
 ## What happens when you place an order
 
 ```text
@@ -76,4 +78,4 @@ The chart's `values.yaml` holds the images, port numbers, service addresses, res
 
 The four SQLite files are **local test substitutes**. No payment is collected and no actual email is sent. Order processing currently uses direct HTTP calls; it does not yet use EventBridge or SQS. The APIs have no customer authentication, so this is for local development only and must not be exposed publicly as a production shop.
 
-Next: complete a real local Compose and Kubernetes run, then prove the database/cache adapters and event consumers before provisioning AWS. The [service and ingress map](docs/service-map.md) now shows the exact order for EKS, the controller, and the public ALB. Product and Order will move to RDS/Aurora MySQL; Inventory and Notification to DynamoDB; Product will use ElastiCache; Order events will use EventBridge and SQS with retries and DLQs. App PRs run app checks, image builds, and Helm validation. Terraform changes have their own reviewed infrastructure workflow in a separately permissioned repository, and ordinary app releases do not run Terraform.
+Next: run the chart on local Kubernetes, then prove the database/cache adapters and event consumers before provisioning AWS. The [service and ingress map](docs/service-map.md) now shows the exact order for EKS, the controller, and the public ALB. Product and Order will move to RDS/Aurora MySQL; Inventory and Notification to DynamoDB; Product will use ElastiCache; Order events will use EventBridge and SQS with retries and DLQs. App PRs run app checks, image builds, and Helm validation. Terraform changes have their own reviewed infrastructure workflow in a separately permissioned repository, and ordinary app releases do not run Terraform.

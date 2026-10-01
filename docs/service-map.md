@@ -2,7 +2,7 @@
 
 This is the application-first map for the Week 3 project. It separates the working local demo from the AWS event design we will implement later. We will use it to derive Terraform networking and IAM rather than guessing those permissions in advance.
 
-The HTTP integration test passes. A live Compose or local Kubernetes deployment has not yet been verified on this machine because its Docker engine is off.
+The Docker Compose deployment and a complete test order have been verified on this machine. A live local Kubernetes deployment has not yet been verified.
 
 ## Working now: local demo
 
