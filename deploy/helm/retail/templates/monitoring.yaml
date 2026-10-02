@@ -1,28 +1,4 @@
 {{- if .Values.monitoring.enabled }}
-{{- range .Values.services }}
-{{- if ne .name "storefront" }}
----
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  name: {{ $.Release.Name }}-{{ .name }}
-  labels:
-    release: retail-monitoring
-    app.kubernetes.io/part-of: {{ $.Release.Name }}
-spec:
-  namespaceSelector:
-    matchNames: [{{ $.Release.Namespace | quote }}]
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: {{ .name }}
-      app.kubernetes.io/part-of: {{ $.Release.Name }}
-  endpoints:
-    - port: http
-      path: /metrics
-      interval: 30s
-{{- end }}
-{{- end }}
----
 apiVersion: v1
 kind: ConfigMap
 metadata:

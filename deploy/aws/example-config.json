@@ -1,5 +1,6 @@
 {
-  "region": "us-east-2",
+  "region": "us-east-1",
+  "account_id": "866934333672",
   "cluster_name": "retail-week3-dev",
   "ecr_repository_urls": {
     "product": "example.invalid/product",
@@ -21,6 +22,7 @@
   "inventory_queue_name": "inventory",
   "order_results_queue_name": "order",
   "notification_queue_name": "notification",
+  "notification_topic_arn": "arn:aws:sns:us-east-1:866934333672:retail-week3-dev-order-notifications",
   "ingress_allowed_cidrs": "203.0.113.10/32",
-  "certificate_arn": "arn:aws:acm:us-east-2:123456789012:certificate/example"
+  "certificate_arn": ""
 }

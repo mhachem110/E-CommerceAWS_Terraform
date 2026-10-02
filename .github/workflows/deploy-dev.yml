@@ -17,6 +17,7 @@ permissions:
 
 jobs:
   validate:
+    if: github.event_name != 'workflow_dispatch' || inputs.operation == 'deploy'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,6 +32,7 @@ jobs:
       - run: helm lint deploy/helm/retail
 
   security:
+    if: github.event_name != 'workflow_dispatch' || inputs.operation == 'deploy'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -54,6 +56,7 @@ jobs:
 
   deploy:
     needs: [validate, security]
+    if: always() && ((github.event_name == 'workflow_dispatch' && inputs.operation != 'deploy') || (needs.validate.result == 'success' && needs.security.result == 'success'))
     runs-on: ubuntu-latest
     environment: dev
     concurrency:
@@ -67,16 +70,29 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Validate deployment role
+        env:
+          DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+        run: |
+          [[ "$DEPLOY_ROLE_ARN" =~ ^arn:aws:iam::866934333672:role/.+ ]] || {
+            echo "Set AWS_DEPLOY_ROLE_ARN to a role in AWS account 866934333672 in the dev GitHub environment." >&2
+            exit 1
+          }
       - uses: aws-actions/configure-aws-credentials@v6.3.0
         with:
-          aws-region: ${{ vars.AWS_REGION }}
+          aws-region: us-east-1
+          allowed-account-ids: '866934333672'
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+      - name: Verify AWS account after OIDC exchange
+        run: test "$(aws sts get-caller-identity --query Account --output text)" = "866934333672"
       - name: Read non-secret deployment config
         run: |
           mkdir -p deploy/aws/generated
           aws ssm get-parameter --name /retail-week3/dev/config --with-decryption --query Parameter.Value --output text > deploy/aws/generated/config.json
           python -m json.tool deploy/aws/generated/config.json > /dev/null
+          jq -e '.account_id == "866934333672" and .region == "us-east-1"' deploy/aws/generated/config.json > /dev/null
       - uses: aws-actions/amazon-ecr-login@v2.1.7
+        if: github.event_name != 'workflow_dispatch' || inputs.operation == 'deploy'
       - name: Build and publish immutable images
         if: github.event_name != 'workflow_dispatch' || inputs.operation == 'deploy'
         run: |

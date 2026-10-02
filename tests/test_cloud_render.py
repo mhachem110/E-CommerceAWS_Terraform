@@ -17,5 +17,10 @@ def test_cloud_values_and_migration_job():
     assert len(values["services"]) == 5
     assert len(values["workers"]) == 3
     assert all(service["image"].endswith(":abc123") for service in values["services"])
+    notification_worker = next(worker for worker in values["workers"] if worker["name"] == "notification-worker")
+    assert notification_worker["env"]["NOTIFICATION_TOPIC_ARN"] == config["notification_topic_arn"]
+    assert notification_worker["env"]["AWS_DEFAULT_REGION"] == config["region"]
+    product = next(service for service in values["services"] if service["name"] == "product")
+    assert product["env"]["AWS_DEFAULT_REGION"] == config["region"]
     assert job["spec"]["template"]["spec"]["serviceAccountName"] == "retail-db-bootstrap"
     assert job["spec"]["template"]["spec"]["containers"][0]["command"] == ["python", "-m", "services.db_bootstrap"]

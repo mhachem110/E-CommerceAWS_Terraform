@@ -29,7 +29,7 @@ def render(config, tag):
         },
         "services": [
             service("product", images["product"], {
-                "DATA_BACKEND": "aws", **mysql, "MYSQL_DATABASE": "retail_product",
+                "DATA_BACKEND": "aws", **region, **mysql, "MYSQL_DATABASE": "retail_product",
                 "MYSQL_SECRET_ARN": config["product_db_secret_arn"],
                 "REDIS_HOST": config["redis_host"], "REDIS_SECRET_ARN": config["redis_secret_arn"],
             }),
@@ -70,7 +70,8 @@ def render(config, tag):
                 "command": ["python", "-m", "services.notification_worker"],
                 "env": {"DATA_BACKEND": "aws", **events,
                         "NOTIFICATION_TABLE": config["notification_table"],
-                        "NOTIFICATION_QUEUE_NAME": config["notification_queue_name"]},
+                        "NOTIFICATION_QUEUE_NAME": config["notification_queue_name"],
+                        "NOTIFICATION_TOPIC_ARN": config["notification_topic_arn"]},
             },
         ],
         "ingress": {
