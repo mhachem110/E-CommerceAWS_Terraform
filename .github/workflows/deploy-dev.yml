@@ -4,6 +4,13 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      operation:
+        description: Deploy current commit, roll back, or briefly test Product API failure
+        required: true
+        default: deploy
+        type: choice
+        options: [deploy, rollback, failure-demo]
 
 permissions:
   contents: read
@@ -60,10 +67,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - uses: azure/setup-helm@v5
-        with:
-          version: v3.18.4
-      - uses: azure/setup-kubectl@v4
       - uses: aws-actions/configure-aws-credentials@v6.3.0
         with:
           aws-region: ${{ vars.AWS_REGION }}
@@ -75,6 +78,7 @@ jobs:
           python -m json.tool deploy/aws/generated/config.json > /dev/null
       - uses: aws-actions/amazon-ecr-login@v2.1.7
       - name: Build and publish immutable images
+        if: github.event_name != 'workflow_dispatch' || inputs.operation == 'deploy'
         run: |
           set -euo pipefail
           for service in product inventory order notification; do
@@ -91,26 +95,30 @@ jobs:
             docker build -t "$image" frontend
             docker push "$image"
           fi
-      - name: Render and deploy app
+      - name: Deploy and smoke test from private VPC executor
         run: |
           set -euo pipefail
-          python deploy/aws/render_values.py --config deploy/aws/generated/config.json --tag "$GITHUB_SHA" --output-dir deploy/aws/generated
-          cluster="$(jq -r '.cluster_name' deploy/aws/generated/config.json)"
-          region="$(jq -r '.region' deploy/aws/generated/config.json)"
-          aws eks update-kubeconfig --name "$cluster" --region "$region"
-          if ! kubectl -n retail get job retail-db-bootstrap >/dev/null 2>&1; then
-            kubectl -n retail create serviceaccount retail-db-bootstrap --dry-run=client -o yaml | kubectl apply -f -
-            kubectl -n retail apply -f deploy/aws/generated/bootstrap-job.json
-          fi
-          kubectl -n retail wait --for=condition=complete job/retail-db-bootstrap --timeout=10m
-          helm upgrade --install retail deploy/helm/retail --namespace retail --values deploy/aws/generated/values.json --wait --atomic --timeout 15m
-          kubectl -n retail rollout status deployment/retail-storefront --timeout=5m
-          kubectl -n retail delete job retail-smoke --ignore-not-found=true
-          smoke_image="$(jq -r '.ecr_repository_urls.product' deploy/aws/generated/config.json):${GITHUB_SHA}"
-          kubectl -n retail create job retail-smoke --image="$smoke_image" -- python -m services.cloud_smoke
-          if ! kubectl -n retail wait --for=condition=complete job/retail-smoke --timeout=3m; then
-            kubectl -n retail logs job/retail-smoke --all-containers=true
-            exit 1
-          fi
-          kubectl -n retail logs job/retail-smoke
-          helm -n retail history retail
+          bucket="$(jq -r '.deploy_bundle_bucket' deploy/aws/generated/config.json)"
+          project="$(jq -r '.app_executor_project' deploy/aws/generated/config.json)"
+          key="app/${GITHUB_SHA}.zip"
+          zip -qr /tmp/retail-app.zip deploy/helm/retail deploy/aws/render_values.py deploy/aws/run-vpc.sh deploy/aws/install-kube-tools.sh
+          aws s3 cp /tmp/retail-app.zip "s3://${bucket}/${key}"
+          build_id="$(aws codebuild start-build --project-name "$project" \
+            --environment-variables-override \
+              "name=BUNDLE_KEY,value=${key},type=PLAINTEXT" \
+              "name=IMAGE_TAG,value=${GITHUB_SHA},type=PLAINTEXT" \
+              "name=DEPLOY_OPERATION,value=${{ github.event_name == 'workflow_dispatch' && inputs.operation || 'deploy' }},type=PLAINTEXT" \
+            --query 'build.id' --output text)"
+          for attempt in $(seq 1 180); do
+            status="$(aws codebuild batch-get-builds --ids "$build_id" --query 'builds[0].buildStatus' --output text)"
+            case "$status" in
+              SUCCEEDED) echo "Retail deployment and smoke test succeeded: $build_id"; exit 0 ;;
+              FAILED|FAULT|STOPPED|TIMED_OUT)
+                aws codebuild batch-get-builds --ids "$build_id" --query 'builds[0].logs.deepLink' --output text
+                echo "Retail deployment failed: $status" >&2
+                exit 1 ;;
+            esac
+            sleep 15
+          done
+          echo "Timed out waiting for retail deployment" >&2
+          exit 1

@@ -61,6 +61,9 @@ services:
 
 workers: []
 
+monitoring:
+  enabled: false
+
 ingress:
   enabled: false
   certificateArn: ""

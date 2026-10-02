@@ -56,3 +56,5 @@ jobs:
           version: v3.18.4
       - run: helm lint deploy/helm/retail
       - run: helm template retail deploy/helm/retail > rendered.yaml
+      - run: python deploy/aws/render_values.py --config deploy/aws/example-config.json --tag ci --output-dir /tmp/retail-render
+      - run: helm template retail deploy/helm/retail --namespace retail --values /tmp/retail-render/values.json > cloud-rendered.yaml

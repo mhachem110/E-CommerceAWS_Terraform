@@ -1,4 +1,4 @@
-"""One-time database schemas, scoped users, and demo catalog for an EKS release."""
+"""Idempotent, versioned schema setup and demo catalog for each EKS release."""
 
 import os
 
@@ -28,6 +28,12 @@ def main():
         with connection.cursor() as cursor:
             cursor.execute("CREATE DATABASE IF NOT EXISTS retail_product CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
             cursor.execute("CREATE DATABASE IF NOT EXISTS retail_order CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
+            cursor.execute("""CREATE TABLE IF NOT EXISTS retail_product.schema_migrations (
+                version INT PRIMARY KEY, applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )""")
+            cursor.execute("""CREATE TABLE IF NOT EXISTS retail_order.schema_migrations (
+                version INT PRIMARY KEY, applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )""")
             cursor.execute("""CREATE TABLE IF NOT EXISTS retail_product.products (
                 id VARCHAR(64) PRIMARY KEY, name VARCHAR(255) NOT NULL,
                 description TEXT NOT NULL, price_cents INT NOT NULL,
@@ -48,6 +54,8 @@ def main():
                 created_at VARCHAR(40) NOT NULL,
                 INDEX (created_at)
             )""")
+            cursor.execute("INSERT IGNORE INTO retail_product.schema_migrations (version) VALUES (1)")
+            cursor.execute("INSERT IGNORE INTO retail_order.schema_migrations (version) VALUES (1)")
             cursor.executemany(
                 "INSERT IGNORE INTO retail_product.products (id, name, description, price_cents, icon) VALUES (%s, %s, %s, %s, %s)",
                 PRODUCTS,
@@ -75,7 +83,7 @@ def main():
             )
         except stock.meta.client.exceptions.ConditionalCheckFailedException:
             pass
-    print("MySQL schemas and application users are ready", flush=True)
+    print("MySQL schema version 1 and application users are ready", flush=True)
 
 
 if __name__ == "__main__":

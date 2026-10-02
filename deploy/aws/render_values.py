@@ -78,6 +78,7 @@ def render(config, tag):
             "certificateArn": config.get("certificate_arn", ""),
         },
         "hpa": {"storefront": {"enabled": True}},
+        "monitoring": {"enabled": True},
     }
     bootstrap = {
         "apiVersion": "batch/v1", "kind": "Job",

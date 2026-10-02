@@ -1,0 +1,16 @@
+{{- range concat .Values.services .Values.workers }}
+{{- if .env }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $.Release.Name }}-{{ .name }}-config
+  labels:
+    app.kubernetes.io/name: {{ .name }}
+    app.kubernetes.io/part-of: {{ $.Release.Name }}
+data:
+  {{- range $key, $value := .env }}
+  {{ $key }}: {{ tpl $value $ | quote }}
+  {{- end }}
+{{- end }}
+{{- end }}

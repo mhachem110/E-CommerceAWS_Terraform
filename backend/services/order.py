@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import httpx
 from fastapi import FastAPI, Header, HTTPException
+from services.metrics import instrument
 from pydantic import BaseModel, Field, field_validator
 
 from services.cloud_data import mysql_connection
@@ -63,6 +64,7 @@ def initialize():
 
 initialize()
 app = FastAPI(title="Retail Order Service")
+instrument(app, "order")
 
 
 def get_order_row(order_id: str):

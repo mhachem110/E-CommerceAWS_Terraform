@@ -6,6 +6,7 @@ from contextlib import closing
 from pathlib import Path
 
 from fastapi import FastAPI
+from services.metrics import instrument
 from pydantic import BaseModel, Field
 import boto3
 from botocore.exceptions import ClientError
@@ -46,6 +47,7 @@ def initialize():
 
 initialize()
 app = FastAPI(title="Retail Inventory Service")
+instrument(app, "inventory")
 
 
 @app.get("/health")

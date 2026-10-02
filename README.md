@@ -69,12 +69,13 @@ The chart's `values.yaml` holds the images, port numbers, service addresses, res
 | `backend/services/order.py` | Checkout and order status API |
 | `backend/services/notification.py` | Idempotent notification record API |
 | `compose.yaml` | Local containers, private network, and persistent demo data |
-| `deploy/helm/retail/` | Reusable local Kubernetes chart for the five workloads |
+| `deploy/helm/retail/` | Local and cloud Kubernetes chart, ConfigMaps, probes, HPA, and metrics dashboard |
 | `docs/service-map.md` | Current local event flow and planned AWS event, permission, and network paths |
 | `tests/` | End-to-end HTTP flow test |
 | `.github/workflows/app-ci.yml` | App tests and image builds on PRs; no Terraform apply |
 | `.github/workflows/deploy-dev.yml` | Build immutable ECR images and deploy to EKS from protected `main` using GitHub OIDC |
-| `deploy/aws/render_values.py` | Turn non-secret Terraform outputs from SSM into cloud Helm values and the first database Job |
+| `deploy/aws/render_values.py` | Turn Terraform SSM config into cloud Helm values and a per-release schema Job |
+| `deploy/aws/run-vpc.sh` | Private VPC deployment, smoke test, rollback, and failure demonstration |
 
 ## AWS deployment path
 
@@ -82,10 +83,10 @@ The private infrastructure repository provisions the VPC, EKS, RDS MySQL, Elasti
 
 On EKS, Product reads MySQL with a Redis cache, Order stores orders in a separate MySQL schema, Inventory uses DynamoDB transactions, and Notification records status updates in DynamoDB. Order, Inventory, and Notification workers consume their own SQS queues. The Storefront is the only workload behind the ALB; internal APIs use `ClusterIP` Services. The full [cloud service map](docs/service-map.md) shows each call and event. The GitHub workflow requires the `dev` environment variables `AWS_REGION` and `AWS_DEPLOY_ROLE_ARN` after the Terraform apply and platform setup.
 
-The first cloud install runs a one-time Job to create scoped SQL users, two schemas, catalog rows, and initial stock. Later schema changes require explicit migrations. A CIDR-restricted ALB can be used for a temporary HTTP demo; a hostname and ACM certificate are needed for the intended HTTPS route. Do not send real customer data through the unauthenticated demo.
+Every cloud release runs an idempotent, version-recorded schema Job before Helm. It creates scoped SQL users, two schemas, catalog rows, and initial stock without resetting existing stock. Later schema changes need a backward-compatible migration step. A CIDR-restricted ALB can be used for a temporary HTTP demo; a hostname and ACM certificate are needed for the intended HTTPS route. Do not send real customer data through the unauthenticated demo.
 
 ## Current limits
 
 The four SQLite files are **local test substitutes**. Moto provides local EventBridge and SQS APIs; no AWS account or Terraform is used. Notification is a local receipt record, not a real email, and no payment is collected. The APIs have no customer authentication, so this is for local development only and must not be exposed publicly as a production shop.
 
-The cloud path has code and configuration, but no live AWS end-to-end proof yet. The initial AWS OIDC provider and infrastructure role still need one-time creation in the AWS Console. The EKS API currently accepts only an allowlisted IP, so a normal GitHub-hosted runner cannot perform the platform or app Helm installation until a VPC-connected runner or another reviewed network path is configured. It does not process payments or send actual email. The first database bootstrap is not a general migration framework, and the order/event write path uses an explicit retry rather than a transactional outbox. Those are visible follow-up reliability tasks after the first cloud run. Terraform changes have their own reviewed workflow in the separate infrastructure repository.
+The cloud path has code and configuration, but no live AWS end-to-end proof yet. The initial AWS OIDC provider and infrastructure role still need one-time creation in the AWS Console. GitHub uses OIDC for AWS API calls and starts private-subnet CodeBuild projects for Helm; the EKS API stays restricted. The app does not process payments or send actual email. Schema version 1 is recorded, but future schema changes still require explicit migration functions and compatibility review. The order/event write path uses an explicit retry rather than a transactional outbox; that remains a reliability improvement after the first cloud run. Terraform changes have their own reviewed workflow in the separate infrastructure repository.

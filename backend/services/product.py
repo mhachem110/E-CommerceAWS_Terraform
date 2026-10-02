@@ -7,6 +7,7 @@ from contextlib import closing
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
+from services.metrics import instrument
 
 from services.cloud_data import mysql_connection, redis_client
 
@@ -44,6 +45,7 @@ def initialize():
 
 initialize()
 app = FastAPI(title="Retail Product Service")
+instrument(app, "product")
 
 
 @app.get("/health")

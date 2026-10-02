@@ -34,6 +34,16 @@ spec:
         - name: {{ .name }}
           image: {{ .image | quote }}
           imagePullPolicy: {{ $.Values.imagePullPolicy }}
+          {{- if ne .name "storefront" }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 10001
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault
+          {{- end }}
           {{- if .command }}
           command:
             {{- toYaml .command | nindent 12 }}
@@ -44,11 +54,9 @@ spec:
               containerPort: {{ .port }}
           {{- end }}
           {{- if .env }}
-          env:
-            {{- range $key, $value := .env }}
-            - name: {{ $key }}
-              value: {{ tpl $value $ | quote }}
-            {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ $.Release.Name }}-{{ .name }}-config
           {{- end }}
           {{- if .healthPath }}
           readinessProbe:

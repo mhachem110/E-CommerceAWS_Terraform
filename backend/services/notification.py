@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI
+from services.metrics import instrument
 from pydantic import BaseModel, Field
 import boto3
 from botocore.exceptions import ClientError
@@ -44,6 +45,7 @@ def initialize():
 
 initialize()
 app = FastAPI(title="Retail Notification Service")
+instrument(app, "notification")
 
 
 @app.get("/health")
