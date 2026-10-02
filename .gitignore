@@ -6,4 +6,5 @@ __pycache__/
 *.db
 *.db-shm
 *.db-wal
+deploy/aws/generated/
 .DS_Store

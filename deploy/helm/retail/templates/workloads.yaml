@@ -1,0 +1,106 @@
+{{- range concat .Values.services .Values.workers }}
+{{- if and .persistence (ne (int (.replicas | default $.Values.replicaCount)) 1) }}
+{{- fail (printf "%s uses local SQLite and must run with one replica" .name) }}
+{{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $.Release.Name }}-{{ .name }}
+  labels:
+    app.kubernetes.io/name: {{ .name }}
+    app.kubernetes.io/part-of: {{ $.Release.Name }}
+spec:
+  replicas: {{ .replicas | default $.Values.replicaCount }}
+  strategy:
+    type: {{ if .persistence }}Recreate{{ else }}RollingUpdate{{ end }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .name }}
+      app.kubernetes.io/instance: {{ $.Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ .name }}
+        app.kubernetes.io/instance: {{ $.Release.Name }}
+        app.kubernetes.io/part-of: {{ $.Release.Name }}
+    spec:
+      serviceAccountName: {{ $.Release.Name }}-{{ .serviceAccount | default .name }}
+      {{- if .persistence }}
+      securityContext:
+        fsGroup: 10001
+      {{- end }}
+      containers:
+        - name: {{ .name }}
+          image: {{ .image | quote }}
+          imagePullPolicy: {{ $.Values.imagePullPolicy }}
+          {{- if ne .name "storefront" }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 10001
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault
+          {{- end }}
+          {{- if .command }}
+          command:
+            {{- toYaml .command | nindent 12 }}
+          {{- end }}
+          {{- if .port }}
+          ports:
+            - name: http
+              containerPort: {{ .port }}
+          {{- end }}
+          {{- if .env }}
+          envFrom:
+            - configMapRef:
+                name: {{ $.Release.Name }}-{{ .name }}-config
+          {{- end }}
+          {{- if .healthPath }}
+          readinessProbe:
+            httpGet:
+              path: {{ .healthPath }}
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: {{ .healthPath }}
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          {{- end }}
+          resources:
+            {{- toYaml $.Values.resources | nindent 12 }}
+          {{- if .persistence }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          {{- end }}
+      {{- if .persistence }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ $.Release.Name }}-{{ .name }}-data
+      {{- end }}
+---
+{{- if .port }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $.Release.Name }}-{{ .name }}
+  labels:
+    app.kubernetes.io/name: {{ .name }}
+    app.kubernetes.io/part-of: {{ $.Release.Name }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: {{ .name }}
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+  ports:
+    - name: http
+      port: {{ .port }}
+      targetPort: http
+{{- end }}
+{{- end }}

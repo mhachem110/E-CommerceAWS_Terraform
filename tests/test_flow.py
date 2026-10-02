@@ -72,6 +72,8 @@ def stack(tmp_path_factory):
 def test_checkout_reservation_and_notification(stack):
     catalog = httpx.get(f"{stack['product']}/products", timeout=HTTP_TIMEOUT).json()
     assert len(catalog) == 3
+    metrics = httpx.get(f"{stack['product']}/metrics", timeout=HTTP_TIMEOUT).text
+    assert 'retail_http_requests_total{method="GET",route="/products",service="product",status="200"}' in metrics
     product = next(item for item in catalog if item["id"] == "coffee-mug")
     before = httpx.get(f"{stack['inventory']}/inventory/coffee-mug", timeout=HTTP_TIMEOUT).json()["available"]
 

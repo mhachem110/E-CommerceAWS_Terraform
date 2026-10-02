@@ -9,6 +9,29 @@ x-backend: &backend
     retries: 5
 
 services:
+  local-aws:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.local-aws
+    ports:
+      - "4566:5000"
+    restart: unless-stopped
+
+  events-setup:
+    build:
+      context: ./backend
+      args: { SERVICE: product }
+    command: ["python", "-m", "services.setup_local_events"]
+    environment:
+      EVENTS_ENDPOINT_URL: http://local-aws:5000
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
+      EVENT_BUS_NAME: retail-local
+    depends_on:
+      local-aws: { condition: service_started }
+    restart: "no"
+
   product:
     <<: *backend
     build:
@@ -26,8 +49,33 @@ services:
       args: { SERVICE: inventory }
     environment:
       DB_PATH: /data/inventory.db
+      EVENTS_ENDPOINT_URL: http://local-aws:5000
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
+      EVENT_BUS_NAME: retail-local
+      INVENTORY_QUEUE_NAME: retail-inventory-requests
     volumes:
       - inventory-data:/data
+
+  inventory-worker:
+    build:
+      context: ./backend
+      args: { SERVICE: inventory }
+    command: ["python", "-m", "services.inventory_worker"]
+    environment:
+      DB_PATH: /data/inventory.db
+      EVENTS_ENDPOINT_URL: http://local-aws:5000
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
+      EVENT_BUS_NAME: retail-local
+      INVENTORY_QUEUE_NAME: retail-inventory-requests
+    volumes:
+      - inventory-data:/data
+    depends_on:
+      events-setup: { condition: service_completed_successfully }
+    restart: unless-stopped
 
   notification:
     <<: *backend
@@ -47,17 +95,48 @@ services:
     environment:
       DB_PATH: /data/order.db
       PRODUCT_URL: http://product:8000
-      INVENTORY_URL: http://inventory:8000
       NOTIFICATION_URL: http://notification:8000
+      ORDER_FLOW: events
+      EVENTS_ENDPOINT_URL: http://local-aws:5000
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
+      EVENT_BUS_NAME: retail-local
     volumes:
       - order-data:/data
     depends_on:
+      events-setup: { condition: service_completed_successfully }
       product: { condition: service_healthy }
       inventory: { condition: service_healthy }
       notification: { condition: service_healthy }
 
+  order-worker:
+    build:
+      context: ./backend
+      args: { SERVICE: order }
+    command: ["python", "-m", "services.order_worker"]
+    environment:
+      DB_PATH: /data/order.db
+      NOTIFICATION_URL: http://notification:8000
+      EVENTS_ENDPOINT_URL: http://local-aws:5000
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
+      EVENT_BUS_NAME: retail-local
+      ORDER_RESULTS_QUEUE_NAME: retail-order-results
+    volumes:
+      - order-data:/data
+    depends_on:
+      events-setup: { condition: service_completed_successfully }
+      notification: { condition: service_healthy }
+    restart: unless-stopped
+
   storefront:
     build: ./frontend
+    environment:
+      PRODUCT_HOST: product
+      ORDER_HOST: order
+      NGINX_ENVSUBST_FILTER: '^(PRODUCT_HOST|ORDER_HOST|DNS_RESOLVER)$'
     ports:
       - "8080:8080"
     depends_on:

@@ -1,0 +1,140 @@
+name: Deploy dev to EKS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Deploy current commit, roll back, or briefly test Product API failure
+        required: true
+        default: deploy
+        type: choice
+        options: [deploy, rollback, failure-demo]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    if: github.event_name != 'workflow_dispatch' || inputs.operation == 'deploy'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: azure/setup-helm@v5
+        with:
+          version: v3.18.4
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m pytest -q
+      - run: helm lint deploy/helm/retail
+
+  security:
+    if: github.event_name != 'workflow_dispatch' || inputs.operation == 'deploy'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [product, inventory, order, notification, storefront]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image for scan
+        run: |
+          if [ "${{ matrix.service }}" = storefront ]; then
+            docker build -t retail-${{ matrix.service }}:scan frontend
+          else
+            docker build --build-arg SERVICE=${{ matrix.service }} -t retail-${{ matrix.service }}:scan backend
+          fi
+      - uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: retail-${{ matrix.service }}:scan
+          format: table
+          exit-code: '1'
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+
+  deploy:
+    needs: [validate, security]
+    if: always() && ((github.event_name == 'workflow_dispatch' && inputs.operation != 'deploy') || (needs.validate.result == 'success' && needs.security.result == 'success'))
+    runs-on: ubuntu-latest
+    environment: dev
+    concurrency:
+      group: retail-dev-deploy
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate deployment role
+        env:
+          DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+        run: |
+          [[ "$DEPLOY_ROLE_ARN" =~ ^arn:aws:iam::866934333672:role/.+ ]] || {
+            echo "Set AWS_DEPLOY_ROLE_ARN to a role in AWS account 866934333672 in the dev GitHub environment." >&2
+            exit 1
+          }
+      - uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          aws-region: us-east-1
+          allowed-account-ids: '866934333672'
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+      - name: Verify AWS account after OIDC exchange
+        run: test "$(aws sts get-caller-identity --query Account --output text)" = "866934333672"
+      - name: Read non-secret deployment config
+        run: |
+          mkdir -p deploy/aws/generated
+          aws ssm get-parameter --name /retail-week3/dev/config --with-decryption --query Parameter.Value --output text > deploy/aws/generated/config.json
+          python -m json.tool deploy/aws/generated/config.json > /dev/null
+          jq -e '.account_id == "866934333672" and .region == "us-east-1"' deploy/aws/generated/config.json > /dev/null
+      - uses: aws-actions/amazon-ecr-login@v2.1.7
+        if: github.event_name != 'workflow_dispatch' || inputs.operation == 'deploy'
+      - name: Build and publish immutable images
+        if: github.event_name != 'workflow_dispatch' || inputs.operation == 'deploy'
+        run: |
+          set -euo pipefail
+          for service in product inventory order notification; do
+            if aws ecr describe-images --repository-name "retail-$service" --image-ids "imageTag=${GITHUB_SHA}" >/dev/null 2>&1; then
+              echo "Using existing retail-$service image for ${GITHUB_SHA}"
+              continue
+            fi
+            image="$(jq -r --arg s "$service" '.ecr_repository_urls[$s]' deploy/aws/generated/config.json):${GITHUB_SHA}"
+            docker build --build-arg SERVICE="$service" -t "$image" backend
+            docker push "$image"
+          done
+          if ! aws ecr describe-images --repository-name retail-storefront --image-ids "imageTag=${GITHUB_SHA}" >/dev/null 2>&1; then
+            image="$(jq -r '.ecr_repository_urls.storefront' deploy/aws/generated/config.json):${GITHUB_SHA}"
+            docker build -t "$image" frontend
+            docker push "$image"
+          fi
+      - name: Deploy and smoke test from private VPC executor
+        run: |
+          set -euo pipefail
+          bucket="$(jq -r '.deploy_bundle_bucket' deploy/aws/generated/config.json)"
+          project="$(jq -r '.app_executor_project' deploy/aws/generated/config.json)"
+          key="app/${GITHUB_SHA}.zip"
+          zip -qr /tmp/retail-app.zip deploy/helm/retail deploy/aws/render_values.py deploy/aws/run-vpc.sh deploy/aws/install-kube-tools.sh
+          aws s3 cp /tmp/retail-app.zip "s3://${bucket}/${key}"
+          build_id="$(aws codebuild start-build --project-name "$project" \
+            --environment-variables-override \
+              "name=BUNDLE_KEY,value=${key},type=PLAINTEXT" \
+              "name=IMAGE_TAG,value=${GITHUB_SHA},type=PLAINTEXT" \
+              "name=DEPLOY_OPERATION,value=${{ github.event_name == 'workflow_dispatch' && inputs.operation || 'deploy' }},type=PLAINTEXT" \
+            --query 'build.id' --output text)"
+          for attempt in $(seq 1 180); do
+            status="$(aws codebuild batch-get-builds --ids "$build_id" --query 'builds[0].buildStatus' --output text)"
+            case "$status" in
+              SUCCEEDED) echo "Retail deployment and smoke test succeeded: $build_id"; exit 0 ;;
+              FAILED|FAULT|STOPPED|TIMED_OUT)
+                aws codebuild batch-get-builds --ids "$build_id" --query 'builds[0].logs.deepLink' --output text
+                echo "Retail deployment failed: $status" >&2
+                exit 1 ;;
+            esac
+            sleep 15
+          done
+          echo "Timed out waiting for retail deployment" >&2
+          exit 1

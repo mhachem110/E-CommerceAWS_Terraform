@@ -1,0 +1,6 @@
+# Cloud deployment and the privileged migration job require owner review.
+# Replace this owner with the cloud-engineering team when the repos move to an organization.
+/.github/workflows/deploy-dev.yml @mhachem110
+/deploy/aws/ @mhachem110
+/deploy/helm/ @mhachem110
+/backend/services/db_bootstrap.py @mhachem110

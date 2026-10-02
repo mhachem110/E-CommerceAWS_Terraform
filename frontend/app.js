@@ -55,10 +55,24 @@ async function retryOrder(orderId) {
   try {
     const response = await fetch(`/api/orders/${encodeURIComponent(orderId)}/retry`, { method: "POST" });
     if (!response.ok) throw new Error("Could not retry this order.");
-    showOrder(await response.json());
+    const order = await response.json();
+    showOrder(order.status === "PENDING" ? await waitForOrder(order.id) : order);
   } catch (error) {
     showMessage("Retry failed", [error.message], true);
   }
+}
+
+async function waitForOrder(orderId) {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    await new Promise(resolve => setTimeout(resolve, 750));
+    const response = await fetch(`/api/orders/${encodeURIComponent(orderId)}`);
+    if (!response.ok) throw new Error("Could not check the order status.");
+    const order = await response.json();
+    if (order.status !== "PENDING") return order;
+  }
+  const response = await fetch(`/api/orders/${encodeURIComponent(orderId)}`);
+  if (!response.ok) throw new Error("Could not check the order status.");
+  return response.json();
 }
 
 function renderProducts() {
@@ -131,7 +145,13 @@ form.addEventListener("submit", async event => {
       const body = await response.json().catch(() => ({}));
       throw new Error(typeof body.detail === "string" ? body.detail : "Could not place the order.");
     }
-    showOrder(await response.json());
+    const order = await response.json();
+    if (order.status === "PENDING") {
+      showMessage("Order received", [`Order ${order.id}`, "Inventory is checking stock. You can watch the worker process it in the logs."]);
+      showOrder(await waitForOrder(order.id));
+    } else {
+      showOrder(order);
+    }
     checkoutKey = null;
   } catch (error) {
     showMessage("Checkout failed", [error.message], true);

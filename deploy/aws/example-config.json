@@ -1,0 +1,28 @@
+{
+  "region": "us-east-1",
+  "account_id": "866934333672",
+  "cluster_name": "retail-week3-dev",
+  "ecr_repository_urls": {
+    "product": "example.invalid/product",
+    "inventory": "example.invalid/inventory",
+    "order": "example.invalid/order",
+    "notification": "example.invalid/notification",
+    "storefront": "example.invalid/storefront"
+  },
+  "mysql_host": "mysql.example.invalid",
+  "product_db_secret_arn": "arn:product",
+  "order_db_secret_arn": "arn:order",
+  "mysql_root_secret_arn": "arn:root",
+  "redis_host": "redis.example.invalid",
+  "redis_secret_arn": "arn:redis",
+  "stock_table": "stock",
+  "reservation_table": "reservations",
+  "notification_table": "notifications",
+  "event_bus_name": "retail",
+  "inventory_queue_name": "inventory",
+  "order_results_queue_name": "order",
+  "notification_queue_name": "notification",
+  "notification_topic_arn": "arn:aws:sns:us-east-1:866934333672:retail-week3-dev-order-notifications",
+  "ingress_allowed_cidrs": "203.0.113.10/32",
+  "certificate_arn": ""
+}

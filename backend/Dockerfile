@@ -4,6 +4,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 WORKDIR /app
 
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
     && useradd --create-home --uid 10001 app \
@@ -11,7 +13,8 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && chown app:app /data
 
 ARG SERVICE
-COPY services/__init__.py services/__init__.py
+COPY services/ services/
+COPY certs/ certs/
 COPY services/${SERVICE}.py services/main.py
 USER app
 EXPOSE 8000

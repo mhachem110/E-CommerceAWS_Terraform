@@ -1,0 +1,18 @@
+{
+  "title": "Retail services",
+  "uid": "retail-services",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    { "id": 1, "type": "timeseries", "title": "Requests per second", "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 }, "targets": [{ "expr": "sum by (service) (rate(retail_http_requests_total[5m]))", "legendFormat": "{{service}}" }] },
+    { "id": 2, "type": "timeseries", "title": "95th percentile latency", "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 }, "fieldConfig": { "defaults": { "unit": "s" } }, "targets": [{ "expr": "histogram_quantile(0.95, sum by (le, service) (rate(retail_http_request_duration_seconds_bucket[5m])))", "legendFormat": "{{service}}" }] },
+    { "id": 3, "type": "timeseries", "title": "Server errors per second", "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 }, "targets": [{ "expr": "sum by (service) (rate(retail_http_requests_total{status=~\"5..\"}[5m]))", "legendFormat": "{{service}}" }] },
+    { "id": 4, "type": "timeseries", "title": "Pod restarts", "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 }, "targets": [{ "expr": "sum by (pod) (increase(kube_pod_container_status_restarts_total{namespace=\"retail\"}[1h]))", "legendFormat": "{{pod}}" }] },
+    { "id": 5, "type": "timeseries", "title": "Pod CPU usage", "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 }, "fieldConfig": { "defaults": { "unit": "cores" } }, "targets": [{ "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"retail\",pod!=\"\",container!=\"\",container!=\"POD\"}[5m]))", "legendFormat": "{{pod}}" }] },
+    { "id": 6, "type": "timeseries", "title": "Pod memory working set", "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 }, "fieldConfig": { "defaults": { "unit": "bytes" } }, "targets": [{ "expr": "sum by (pod) (container_memory_working_set_bytes{namespace=\"retail\",pod!=\"\",container!=\"\",container!=\"POD\"})", "legendFormat": "{{pod}}" }] },
+    { "id": 7, "type": "timeseries", "title": "Deployment replicas available", "description": "Available replicas divided by desired replicas. A drop below 100% means at least one application replica is unavailable.", "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 }, "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 } }, "targets": [{ "expr": "100 * kube_deployment_status_replicas_available{namespace=\"retail\",deployment=~\"retail-.*\"} / clamp_min(kube_deployment_spec_replicas{namespace=\"retail\",deployment=~\"retail-.*\"}, 1)", "legendFormat": "{{deployment}}" }] },
+    { "id": 8, "type": "timeseries", "title": "Order create HTTP acceptance", "description": "Percentage of POST /orders requests returning HTTP 2xx. This does not mean the asynchronous order was finally confirmed.", "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 }, "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 } }, "targets": [{ "expr": "100 * sum(rate(retail_http_requests_total{service=\"order\",method=\"POST\",route=\"/orders\",status=~\"2..\"}[5m])) / clamp_min(sum(rate(retail_http_requests_total{service=\"order\",method=\"POST\",route=\"/orders\"}[5m])), 0.000001)", "legendFormat": "Accepted" }] }
+  ]
+}

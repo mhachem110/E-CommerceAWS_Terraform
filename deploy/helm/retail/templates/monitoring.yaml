@@ -1,0 +1,12 @@
+{{- if .Values.monitoring.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-grafana-dashboard
+  labels:
+    grafana_dashboard: "1"
+    app.kubernetes.io/part-of: {{ .Release.Name }}
+data:
+  retail.json: |
+{{ .Files.Get "dashboards/retail.json" | indent 4 }}
+{{- end }}
