@@ -12,6 +12,7 @@ RUN pip install --no-cache-dir -r requirements.txt \
 
 ARG SERVICE
 COPY services/ services/
+COPY certs/ certs/
 COPY services/${SERVICE}.py services/main.py
 USER app
 EXPOSE 8000

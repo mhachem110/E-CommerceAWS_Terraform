@@ -11,6 +11,7 @@ import httpx
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
+from services.cloud_data import mysql_connection
 from services.messaging import publish_event
 
 DB_PATH = Path(os.getenv("DB_PATH", "./order.db"))
@@ -18,6 +19,8 @@ PRODUCT_URL = os.getenv("PRODUCT_URL", "http://localhost:8001")
 INVENTORY_URL = os.getenv("INVENTORY_URL", "http://localhost:8002")
 NOTIFICATION_URL = os.getenv("NOTIFICATION_URL", "http://localhost:8004")
 ORDER_FLOW = os.getenv("ORDER_FLOW", "sync")
+DATA_BACKEND = os.getenv("DATA_BACKEND", "sqlite")
+NOTIFICATION_FLOW = os.getenv("NOTIFICATION_FLOW", "direct")
 
 
 class Checkout(BaseModel):
@@ -41,6 +44,8 @@ def connect():
 
 
 def initialize():
+    if DATA_BACKEND == "aws":
+        return
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with closing(connect()) as connection:
         connection.execute(
@@ -61,19 +66,40 @@ app = FastAPI(title="Retail Order Service")
 
 
 def get_order_row(order_id: str):
+    if DATA_BACKEND == "aws":
+        connection = mysql_connection()
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT * FROM orders WHERE id = %s", (order_id,))
+                return cursor.fetchone()
+        finally:
+            connection.close()
     with closing(connect()) as connection:
         row = connection.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
     return dict(row) if row else None
 
 
 def update_order(order_id: str, **changes):
+    allowed = {"status", "notification_status", "reason"}
+    if not set(changes) <= allowed:
+        raise ValueError("Unsupported order update")
     if changes:
-        columns = ", ".join(f"{column} = ?" for column in changes)
-        with closing(connect()) as connection:
-            connection.execute(
-                f"UPDATE orders SET {columns} WHERE id = ?", (*changes.values(), order_id)
-            )
-            connection.commit()
+        if DATA_BACKEND == "aws":
+            columns = ", ".join(f"{column} = %s" for column in changes)
+            connection = mysql_connection()
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute(f"UPDATE orders SET {columns} WHERE id = %s", (*changes.values(), order_id))
+                connection.commit()
+            finally:
+                connection.close()
+        else:
+            columns = ", ".join(f"{column} = ?" for column in changes)
+            with closing(connect()) as connection:
+                connection.execute(
+                    f"UPDATE orders SET {columns} WHERE id = ?", (*changes.values(), order_id)
+                )
+                connection.commit()
     return get_order_row(order_id)
 
 
@@ -130,10 +156,19 @@ def create_order(checkout: Checkout, idempotency_key: str | None = Header(defaul
     if idempotency_key and len(idempotency_key) > 100:
         raise HTTPException(400, "Idempotency key is too long")
     key = idempotency_key or str(uuid4())
-    with closing(connect()) as connection:
-        existing = connection.execute(
-            "SELECT * FROM orders WHERE idempotency_key = ?", (key,)
-        ).fetchone()
+    if DATA_BACKEND == "aws":
+        connection = mysql_connection()
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT * FROM orders WHERE idempotency_key = %s", (key,))
+                existing = cursor.fetchone()
+        finally:
+            connection.close()
+    else:
+        with closing(connect()) as connection:
+            existing = connection.execute(
+                "SELECT * FROM orders WHERE idempotency_key = ?", (key,)
+            ).fetchone()
     if existing:
         if (existing["product_id"], existing["quantity"], existing["email"]) != (
             checkout.product_id, checkout.quantity, checkout.email
@@ -153,21 +188,39 @@ def create_order(checkout: Checkout, idempotency_key: str | None = Header(defaul
         raise HTTPException(503, "Product service unavailable") from None
 
     order_id = str(uuid4())
-    with closing(connect()) as connection:
-        connection.execute(
-            """INSERT OR IGNORE INTO orders VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                order_id, key, checkout.product_id, product["name"], checkout.quantity,
-                product["price_cents"], checkout.quantity * product["price_cents"],
-                checkout.email, "PENDING", "PENDING", None,
-                datetime.now(timezone.utc).isoformat(),
-            ),
-        )
-        connection.commit()
-        row = connection.execute(
-            "SELECT * FROM orders WHERE idempotency_key = ?", (key,)
-        ).fetchone()
+    values = (
+        order_id, key, checkout.product_id, product["name"], checkout.quantity,
+        product["price_cents"], checkout.quantity * product["price_cents"],
+        checkout.email, "PENDING", "PENDING", None,
+        datetime.now(timezone.utc).isoformat(),
+    )
+    if DATA_BACKEND == "aws":
+        connection = mysql_connection()
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "INSERT IGNORE INTO orders (id, idempotency_key, product_id, product_name, quantity, unit_price_cents, total_cents, email, status, notification_status, reason, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    values,
+                )
+                cursor.execute("SELECT * FROM orders WHERE idempotency_key = %s", (key,))
+                row = cursor.fetchone()
+            connection.commit()
+        finally:
+            connection.close()
+    else:
+        with closing(connect()) as connection:
+            connection.execute(
+                "INSERT OR IGNORE INTO orders VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", values
+            )
+            connection.commit()
+            row = connection.execute(
+                "SELECT * FROM orders WHERE idempotency_key = ?", (key,)
+            ).fetchone()
     order = dict(row)
+    if (order["product_id"], order["quantity"], order["email"]) != (
+        checkout.product_id, checkout.quantity, checkout.email
+    ):
+        raise HTTPException(409, "Idempotency key belongs to a different checkout")
     if ORDER_FLOW == "events":
         try:
             publish_event(
@@ -203,6 +256,12 @@ def retry_order(order_id: str):
             )
             return update_order(order_id, reason=None)
         if order["status"] == "CONFIRMED":
+            if NOTIFICATION_FLOW == "events":
+                publish_event("OrderStatusUpdated", "retail.order", {
+                    "order_id": order_id, "status": order["status"], "email": order["email"],
+                    "quantity": order["quantity"], "product_name": order["product_name"],
+                })
+                return order
             return send_notification(order)
         return order
     return process_order(order)

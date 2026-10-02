@@ -1,6 +1,6 @@
 # Service connections before infrastructure
 
-This is the application-first map for the Week 3 project. It separates the working local demo from the AWS event design we will implement later. We will use it to derive Terraform networking and IAM rather than guessing those permissions in advance.
+This map connects each application service to its local test dependency and its AWS resource. The AWS resources are defined in the separate `Retail-Platform-Infra` repository; they have not been applied to an AWS account yet.
 
 The Docker Compose deployment and a complete test order have been verified on this machine. A live local Kubernetes deployment has not yet been verified.
 
@@ -25,9 +25,9 @@ Moto runs local EventBridge and SQS API endpoints so the services use the AWS SD
 ## Kubernetes traffic path
 
 ```text
-Local test: browser → kubectl port-forward → storefront Service → storefront Pod
+Local Kubernetes test: browser → kubectl port-forward → storefront Service → storefront Pod
 
-AWS later: browser → public ALB → storefront Pods
+AWS: browser → CIDR-restricted public ALB → storefront Pods
                               ↑
                    Ingress names storefront Service
 
@@ -37,11 +37,11 @@ Inside cluster: storefront → Product / Order Services → their Pods
 
 Each Deployment gives its Pods `app.kubernetes.io/name` and `app.kubernetes.io/instance` labels. Its Kubernetes Service selects those same labels. The Service name gives callers a stable DNS address even when a Pod is replaced and its IP changes. Our [Helm workload template](../deploy/helm/retail/templates/workloads.yaml) already creates a `ClusterIP` Service for each of the five workloads. The browser has no direct route to the four backend Services. [Kubernetes Service documentation](https://kubernetes.io/docs/concepts/services-networking/service/)
 
-For EKS, use **one** public ALB Ingress that names only the storefront Service. Install the AWS Load Balancer Controller and its scoped AWS IAM identity first; then enable the application Ingress after the storefront Service exists. Use `ingressClassName: alb` and `alb.ingress.kubernetes.io/target-type: ip`. With IP targets, the controller discovers the storefront Pods through the Service and registers their Pod IPs with the ALB. This lets the storefront Service remain `ClusterIP`; it does not need a public `NodePort`. Configure public subnet discovery, an ACM certificate, HTTPS on 443, an HTTP-to-HTTPS redirect, and DNS when we build the EKS environment. [AWS ALB ingress guidance](https://docs.aws.amazon.com/eks/latest/userguide/alb-ingress.html)
+The cloud Helm chart creates **one** public ALB Ingress naming only the storefront Service. The AWS Load Balancer Controller and its Pod Identity must be installed first. The Ingress uses `ingressClassName: alb` and IP targets, so the storefront Service stays `ClusterIP`. Terraform supplies a restricted source CIDR. When an ACM certificate ARN is supplied, the Ingress enables HTTPS on 443 and redirects HTTP to HTTPS. A public hostname and DNS record are still needed for the complete HTTPS path. [AWS ALB ingress guidance](https://docs.aws.amazon.com/eks/latest/userguide/alb-ingress.html)
 
 The AWS Load Balancer Controller is a platform component; the application's Helm release will own its Ingress rule, subject to cloud-engineer review. An Ingress without a matching controller does not create a fallback Classic Load Balancer. A `LoadBalancer` Service is a different approach; we are not using one for the storefront. Installing the controller with Helm and terminating TLS at the ALB with ACM does not make `cert-manager` an automatic requirement. IRSA/OIDC grants AWS API permissions to a Kubernetes service account; Kubernetes RBAC separately controls Kubernetes API access. [AWS controller installation](https://docs.aws.amazon.com/eks/latest/userguide/lbc-helm.html), [controller chart defaults](https://github.com/aws/eks-charts/blob/master/stable/aws-load-balancer-controller/values.yaml)
 
-## Planned AWS route: EventBridge and SQS
+## AWS event route: EventBridge and SQS
 
 | Event | Producer | Route | Consumer and action |
 | --- | --- | --- | --- |
@@ -49,28 +49,28 @@ The AWS Load Balancer Controller is a platform component; the application's Helm
 | `InventoryReserved` / `InventoryFailed` | Inventory Service | EventBridge rule → order result SQS queue | Order Service polls, sets `CONFIRMED` or `REJECTED` in MySQL |
 | `OrderStatusUpdated` | Order Service | EventBridge rule → notification SQS queue | Notification Service polls and records/sends one notification in DynamoDB |
 | `OrderStatusUpdated` | Order Service | EventBridge rule → lightweight Lambda | Lambda writes a structured audit/metric record for the demo |
+| `NotificationRecorded` | Notification Service | EventBridge rule → order result SQS queue | Order worker marks notification status `RECORDED` |
 
 Each SQS queue gets a dead-letter queue. Consumers must delete messages only after processing, tolerate redelivery, and use the order/event ID to avoid duplicate business effects. SQS does not initiate a connection to a service: workers poll it. The frontend, Product Service, and database resources do not need SQS permissions for this flow.
 
-## Permissions and network paths to derive later
+## AWS workload permissions and network paths
 
 | Workload | Intended AWS permissions | Network destination |
 | --- | --- | --- |
-| Order | MySQL access; EventBridge `PutEvents`; receive/delete on order result queue | RDS endpoint, EventBridge API, SQS API |
-| Inventory | DynamoDB inventory table; EventBridge `PutEvents`; receive/delete on inventory request queue | DynamoDB API, EventBridge API, SQS API |
-| Notification | DynamoDB notification table; receive/delete on notification queue; eventual email provider permission if selected | DynamoDB API, SQS API |
-| Product | MySQL product data; ElastiCache catalog cache | RDS endpoint, Redis endpoint |
+| Order | Its MySQL app credential; EventBridge `PutEvents`; receive/delete on order result queue | RDS endpoint, EventBridge API, SQS API |
+| Inventory | DynamoDB stock/reservation tables; EventBridge `PutEvents`; receive/delete on inventory request queue | DynamoDB API, EventBridge API, SQS API |
+| Notification | DynamoDB notification table; EventBridge `PutEvents`; receive/delete on notification queue | DynamoDB API, EventBridge API, SQS API |
+| Product | Read-only MySQL app credential; Redis credential | RDS endpoint, Redis endpoint |
 | Storefront | No direct database or queue permission | Product and Order Kubernetes Services |
 | Audit Lambda | Resource policy allows the selected EventBridge rule to invoke it; execution role writes audit logs/metrics | CloudWatch APIs as needed |
 
-On EKS, give each workload a dedicated AWS identity and only the actions/resources it needs. The SQS queue policies must allow the matching EventBridge rules to send messages. SQS and EventBridge are reached over HTTPS through NAT or the relevant VPC endpoints. A queue itself has no security group; if we use an interface endpoint, its security group must allow the clients' HTTPS traffic. Terraform should follow the selected route and IAM map. [AWS SQS network guidance](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/troubleshooting-network-errors.html)
+On EKS, Pod Identity gives each workload short-lived AWS credentials scoped to the resources it uses. EventBridge rules have queue policies that permit only their own rule ARNs to send messages. The dev VPC uses NAT for HTTPS calls to EventBridge, SQS, DynamoDB, and Secrets Manager. RDS and Redis accept traffic only from EKS nodes. [AWS SQS network guidance](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/troubleshooting-network-errors.html)
 
-## Data ownership and implementation order
+## Data ownership and deployment order
 
-Product and Order will own separate schemas/tables in RDS/Aurora MySQL. Inventory and Notification will own separate DynamoDB tables. Product will add explicit cache read/miss/populate logic for ElastiCache. We will first prove these adapters and the event consumers locally, then define the AWS resources, Helm values, and IAM they actually require. The local SQLite Helm chart is a learning bridge, not the EKS production storage design.
+Product and Order use separate MySQL schemas and scoped SQL accounts on a Multi-AZ RDS instance. Inventory owns DynamoDB stock and reservation tables; Notification owns its table. Product reads Redis first, falls back to MySQL on a cache miss or outage, and caches results for 60 seconds. Local SQLite and Moto remain available for offline testing.
 
-1. Finish the local app proof: run Compose and then the five-image Helm release on a **local** Kubernetes context. Verify Pod readiness, Service DNS, order flow, and `kubectl port-forward` to the storefront. Do not use the unrelated AKS context configured on this machine.
-2. Implement and test the intended database/cache adapters and event consumers with local or test substitutes. Confirm the producer, queue, consumer, retry, and failure behavior before creating AWS resources.
-3. Freeze the connection, IAM, and network map above. In the separate restricted infrastructure repository, use reviewed Terraform plans to create EKS, data services, event resources, VPC paths, and controller IAM. Install and verify the AWS Load Balancer Controller.
-4. Deploy approved images with Helm and connect the real AWS dependencies. Before enabling the public ALB Ingress, add access control or constrain the demo audience and keep real customer data out of the unauthenticated demo APIs. Verify HTTPS, DNS, health checks, and that the backend Services remain private.
-5. Demonstrate a new image release, scaling after SQLite is removed, failure recovery, Helm history/rollback, monitoring, and the complete order event path. App-only releases do not run Terraform; infrastructure changes do.
+1. Cloud engineers sign in to AWS, configure restricted `admin_cidrs`, initialize encrypted remote state, review the Terraform plan, and apply it in the private infrastructure repo.
+2. Cloud engineers install the AWS Load Balancer Controller and Metrics Server. Terraform installs the EKS Pod Identity and CloudWatch Observability add-ons.
+3. Configure the app repo's protected GitHub `dev` environment with the deploy role ARN and region. Merge a reviewed app PR to `main`; GitHub Actions pushes immutable images to ECR, runs first-install data bootstrap, and deploys Helm.
+4. Verify the ALB, private backend Services, order event flow, worker logs, DLQs, and Helm rollback. Add an ACM certificate and DNS for HTTPS. App-only releases do not run Terraform; infrastructure changes do.

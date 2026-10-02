@@ -3,7 +3,7 @@ server {
     server_name _;
     root /usr/share/nginx/html;
     index index.html;
-    resolver 127.0.0.11 valid=10s;
+    resolver ${DNS_RESOLVER} valid=10s;
 
     location /api/products {
         set $product_host ${PRODUCT_HOST};

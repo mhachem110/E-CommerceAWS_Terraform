@@ -1,0 +1,116 @@
+name: Deploy dev to EKS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: azure/setup-helm@v5
+        with:
+          version: v3.18.4
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m pytest -q
+      - run: helm lint deploy/helm/retail
+
+  security:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [product, inventory, order, notification, storefront]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image for scan
+        run: |
+          if [ "${{ matrix.service }}" = storefront ]; then
+            docker build -t retail-${{ matrix.service }}:scan frontend
+          else
+            docker build --build-arg SERVICE=${{ matrix.service }} -t retail-${{ matrix.service }}:scan backend
+          fi
+      - uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: retail-${{ matrix.service }}:scan
+          format: table
+          exit-code: '1'
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+
+  deploy:
+    needs: [validate, security]
+    runs-on: ubuntu-latest
+    environment: dev
+    concurrency:
+      group: retail-dev-deploy
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: azure/setup-helm@v5
+        with:
+          version: v3.18.4
+      - uses: azure/setup-kubectl@v4
+      - uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+      - name: Read non-secret deployment config
+        run: |
+          mkdir -p deploy/aws/generated
+          aws ssm get-parameter --name /retail-week3/dev/config --with-decryption --query Parameter.Value --output text > deploy/aws/generated/config.json
+          python -m json.tool deploy/aws/generated/config.json > /dev/null
+      - uses: aws-actions/amazon-ecr-login@v2.1.7
+      - name: Build and publish immutable images
+        run: |
+          set -euo pipefail
+          for service in product inventory order notification; do
+            if aws ecr describe-images --repository-name "retail-$service" --image-ids "imageTag=${GITHUB_SHA}" >/dev/null 2>&1; then
+              echo "Using existing retail-$service image for ${GITHUB_SHA}"
+              continue
+            fi
+            image="$(jq -r --arg s "$service" '.ecr_repository_urls[$s]' deploy/aws/generated/config.json):${GITHUB_SHA}"
+            docker build --build-arg SERVICE="$service" -t "$image" backend
+            docker push "$image"
+          done
+          if ! aws ecr describe-images --repository-name retail-storefront --image-ids "imageTag=${GITHUB_SHA}" >/dev/null 2>&1; then
+            image="$(jq -r '.ecr_repository_urls.storefront' deploy/aws/generated/config.json):${GITHUB_SHA}"
+            docker build -t "$image" frontend
+            docker push "$image"
+          fi
+      - name: Render and deploy app
+        run: |
+          set -euo pipefail
+          python deploy/aws/render_values.py --config deploy/aws/generated/config.json --tag "$GITHUB_SHA" --output-dir deploy/aws/generated
+          cluster="$(jq -r '.cluster_name' deploy/aws/generated/config.json)"
+          region="$(jq -r '.region' deploy/aws/generated/config.json)"
+          aws eks update-kubeconfig --name "$cluster" --region "$region"
+          if ! kubectl -n retail get job retail-db-bootstrap >/dev/null 2>&1; then
+            kubectl -n retail create serviceaccount retail-db-bootstrap --dry-run=client -o yaml | kubectl apply -f -
+            kubectl -n retail apply -f deploy/aws/generated/bootstrap-job.json
+          fi
+          kubectl -n retail wait --for=condition=complete job/retail-db-bootstrap --timeout=10m
+          helm upgrade --install retail deploy/helm/retail --namespace retail --values deploy/aws/generated/values.json --wait --atomic --timeout 15m
+          kubectl -n retail rollout status deployment/retail-storefront --timeout=5m
+          kubectl -n retail delete job retail-smoke --ignore-not-found=true
+          smoke_image="$(jq -r '.ecr_repository_urls.product' deploy/aws/generated/config.json):${GITHUB_SHA}"
+          kubectl -n retail create job retail-smoke --image="$smoke_image" -- python -m services.cloud_smoke
+          if ! kubectl -n retail wait --for=condition=complete job/retail-smoke --timeout=3m; then
+            kubectl -n retail logs job/retail-smoke --all-containers=true
+            exit 1
+          fi
+          kubectl -n retail logs job/retail-smoke
+          helm -n retail history retail

@@ -1,4 +1,4 @@
-"""Small AWS SDK helpers for the local EventBridge and SQS learning flow."""
+"""AWS SDK helpers for the local emulator and real EventBridge/SQS."""
 
 import json
 import os
@@ -13,6 +13,7 @@ REGION = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
 EVENT_BUS_NAME = os.getenv("EVENT_BUS_NAME", "retail-local")
 INVENTORY_QUEUE_NAME = os.getenv("INVENTORY_QUEUE_NAME", "retail-inventory-requests")
 ORDER_RESULTS_QUEUE_NAME = os.getenv("ORDER_RESULTS_QUEUE_NAME", "retail-order-results")
+NOTIFICATION_QUEUE_NAME = os.getenv("NOTIFICATION_QUEUE_NAME", "retail-notifications")
 _CLIENT_OPTIONS = {"region_name": REGION}
 if ENDPOINT_URL:
     _CLIENT_OPTIONS["endpoint_url"] = ENDPOINT_URL
@@ -36,7 +37,7 @@ def publish_event(detail_type: str, source: str, detail: dict) -> None:
                 "EventBusName": EVENT_BUS_NAME,
                 "Source": source,
                 "DetailType": detail_type,
-                "Detail": json.dumps(detail),
+                "Detail": json.dumps({"schema_version": 1, **detail}),
             }
         ]
     )
@@ -55,7 +56,7 @@ def receive_one(queue_name: str):
         QueueUrl=queue_url(queue_name),
         MaxNumberOfMessages=1,
         WaitTimeSeconds=5,
-        VisibilityTimeout=10,
+        VisibilityTimeout=30,
     )
     return response.get("Messages", [])
 

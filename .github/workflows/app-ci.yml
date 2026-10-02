@@ -25,13 +25,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker build --build-arg SERVICE=${{ matrix.service }} -t retail-${{ matrix.service }}:ci backend
+      - uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: retail-${{ matrix.service }}:ci
+          format: table
+          exit-code: '1'
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
 
   storefront:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t retail-storefront:ci frontend
-      - run: docker run --rm --add-host=product:127.0.0.1 --add-host=order:127.0.0.1 -e PRODUCT_HOST=product -e ORDER_HOST=order -e 'NGINX_ENVSUBST_FILTER=^(PRODUCT_HOST|ORDER_HOST)$' retail-storefront:ci nginx -t
+      - uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: retail-storefront:ci
+          format: table
+          exit-code: '1'
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+      - run: docker run --rm --add-host=product:127.0.0.1 --add-host=order:127.0.0.1 -e PRODUCT_HOST=product -e ORDER_HOST=order -e 'NGINX_ENVSUBST_FILTER=^(PRODUCT_HOST|ORDER_HOST|DNS_RESOLVER)$' retail-storefront:ci nginx -t
 
   helm:
     runs-on: ubuntu-latest

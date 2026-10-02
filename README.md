@@ -1,8 +1,8 @@
-# Retail microservices: stage 1
+# Retail microservices: local and AWS deployment
 
-A small ecommerce demo for the Week 3 EKS project. It has one storefront and four independent backend services. This stage proves the shopping flow locally before adding AWS infrastructure.
+A small ecommerce demo for the Week 3 EKS project. It has one storefront and four independent backend services. Docker Compose remains a learning/demo path. The `deploy/aws/` renderer, Helm chart, and GitHub Actions workflow now describe the AWS deployment, with infrastructure kept in the separate private `Retail-Platform-Infra` repository.
 
-The Docker Compose app has been run and verified locally. For a simple, step-by-step explanation of what happens when you place an order, read the [local walkthrough](docs/local-walkthrough.md).
+The Docker Compose app has been run and verified locally. The AWS code has been validated but has not been applied to an account yet because AWS credentials are not configured on this machine. For the local order flow, read the [local walkthrough](docs/local-walkthrough.md).
 
 ## What happens when you place an order
 
@@ -73,9 +73,19 @@ The chart's `values.yaml` holds the images, port numbers, service addresses, res
 | `docs/service-map.md` | Current local event flow and planned AWS event, permission, and network paths |
 | `tests/` | End-to-end HTTP flow test |
 | `.github/workflows/app-ci.yml` | App tests and image builds on PRs; no Terraform apply |
+| `.github/workflows/deploy-dev.yml` | Build immutable ECR images and deploy to EKS from protected `main` using GitHub OIDC |
+| `deploy/aws/render_values.py` | Turn non-secret Terraform outputs from SSM into cloud Helm values and the first database Job |
 
-## Scope of this first stage
+## AWS deployment path
+
+The private infrastructure repository provisions the VPC, EKS, RDS MySQL, ElastiCache, DynamoDB, EventBridge, SQS, ECR, IAM, and supporting resources. Cloud engineers review and apply Terraform there. The app repo receives only a scoped GitHub OIDC role and a non-secret SSM deployment configuration. Merging an approved app PR to `main` builds five commit-tagged images and uses Helm to deploy them. Source code releases do **not** run Terraform.
+
+On EKS, Product reads MySQL with a Redis cache, Order stores orders in a separate MySQL schema, Inventory uses DynamoDB transactions, and Notification records status updates in DynamoDB. Order, Inventory, and Notification workers consume their own SQS queues. The Storefront is the only workload behind the ALB; internal APIs use `ClusterIP` Services. The full [cloud service map](docs/service-map.md) shows each call and event. The GitHub workflow requires the `dev` environment variables `AWS_REGION` and `AWS_DEPLOY_ROLE_ARN` after the Terraform apply and platform setup.
+
+The first cloud install runs a one-time Job to create scoped SQL users, two schemas, catalog rows, and initial stock. Later schema changes require explicit migrations. A CIDR-restricted ALB can be used for a temporary HTTP demo; a hostname and ACM certificate are needed for the intended HTTPS route. Do not send real customer data through the unauthenticated demo.
+
+## Current limits
 
 The four SQLite files are **local test substitutes**. Moto provides local EventBridge and SQS APIs; no AWS account or Terraform is used. Notification is a local receipt record, not a real email, and no payment is collected. The APIs have no customer authentication, so this is for local development only and must not be exposed publicly as a production shop.
 
-Next: run the chart on local Kubernetes and make the event flow visible there, then prove the database/cache adapters before provisioning AWS. The [service and ingress map](docs/service-map.md) shows the planned EKS, ALB, data, event, and permissions paths. Product and Order will move to RDS/Aurora MySQL; Inventory and Notification to DynamoDB; Product will use ElastiCache. App PRs run app checks, image builds, and Helm validation. Terraform changes have their own reviewed infrastructure workflow in a separately permissioned repository, and ordinary app releases do not run Terraform.
+The cloud path has code and configuration, but no live AWS end-to-end proof yet. It does not process payments or send actual email. The first database bootstrap is not a general migration framework, and the order/event write path uses an explicit retry rather than a transactional outbox. Those are visible follow-up reliability tasks after the first cloud run. Terraform changes have their own reviewed workflow in the separate infrastructure repository.

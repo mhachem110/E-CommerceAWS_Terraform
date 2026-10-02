@@ -57,4 +57,15 @@ services:
     env:
       PRODUCT_HOST: "{{ .Release.Name }}-product"
       ORDER_HOST: "{{ .Release.Name }}-order"
-      NGINX_ENVSUBST_FILTER: "^(PRODUCT_HOST|ORDER_HOST)$"
+      NGINX_ENVSUBST_FILTER: "^(PRODUCT_HOST|ORDER_HOST|DNS_RESOLVER)$"
+
+workers: []
+
+ingress:
+  enabled: false
+  certificateArn: ""
+  allowedCidrs: ""
+
+hpa:
+  storefront:
+    enabled: false
