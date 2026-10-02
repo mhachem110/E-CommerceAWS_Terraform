@@ -3,14 +3,19 @@ server {
     server_name _;
     root /usr/share/nginx/html;
     index index.html;
+    resolver 127.0.0.11 valid=10s;
 
     location /api/products {
-        proxy_pass http://${PRODUCT_HOST}:8000/products;
+        set $product_host ${PRODUCT_HOST};
+        rewrite ^/api/products(/.*)?$ /products$1 break;
+        proxy_pass http://$product_host:8000;
         proxy_set_header X-Request-ID $request_id;
     }
 
     location /api/orders {
-        proxy_pass http://${ORDER_HOST}:8000/orders;
+        set $order_host ${ORDER_HOST};
+        rewrite ^/api/orders(/.*)?$ /orders$1 break;
+        proxy_pass http://$order_host:8000;
         proxy_set_header X-Request-ID $request_id;
     }
 

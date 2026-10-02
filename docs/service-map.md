@@ -4,17 +4,23 @@ This is the application-first map for the Week 3 project. It separates the worki
 
 The Docker Compose deployment and a complete test order have been verified on this machine. A live local Kubernetes deployment has not yet been verified.
 
-## Working now: local demo
+## Working now: local Compose event flow
 
 | From | To | Purpose |
 | --- | --- | --- |
 | Browser | Storefront only | Public entry point; Nginx proxies `/api/products` and `/api/orders` |
-| Order | Product | Read product name and price before accepting checkout |
-| Order | Inventory | Reserve stock by order ID; retry is idempotent |
-| Order | Notification | Record one receipt by order ID after confirmation |
+| Order API | Product API | Read product name and price before accepting checkout |
+| Order API | Order SQLite | Save a `PENDING` order before publishing an event |
+| Order API | Local EventBridge | Publish `OrderCreated` |
+| EventBridge rule | Inventory request SQS queue | Route matching order events to Inventory |
+| Inventory worker | Inventory SQLite | Reserve stock once per order ID |
+| Inventory worker | Local EventBridge | Publish `InventoryReserved` or `InventoryFailed` |
+| EventBridge rule | Order result SQS queue | Route inventory results to Order |
+| Order worker | Order SQLite | Mark the order `CONFIRMED` or `REJECTED` |
+| Order worker | Notification API | Record one receipt after confirmation |
 | Each backend | Its own SQLite file | Local test data; no shared database |
 
-The direct Order-to-Inventory and Order-to-Notification HTTP calls are temporary. A failed inventory call leaves an order `PENDING` for a manual retry. A failed notification call leaves its notification status `PENDING` for retry. These limitations make the missing queue/recovery behavior visible instead of pretending that the AWS event path already exists.
+Moto runs local EventBridge and SQS API endpoints so the services use the AWS SDK message path without AWS credentials or Terraform. SQS workers poll independently; EventBridge routes events to queues. Notification remains a direct internal HTTP call in this learning stage. The storefront polls the Order API while the event workers finish, then displays the final status. The normal API integration test still uses direct calls to keep it independent of the local emulator.
 
 ## Kubernetes traffic path
 

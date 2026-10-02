@@ -1,65 +1,75 @@
-# Local walkthrough: follow one order
+# Local walkthrough: follow an order through EventBridge and SQS
 
-This is the first learning stage of the retail project. It runs entirely on your computer. It does not create AWS resources or run Terraform.
+This stage runs on your computer with Docker Compose. Moto supplies local AWS-style EventBridge and SQS APIs, so this does not use AWS credentials, Terraform, or an AWS account. Product, Order, Inventory, and Notification still use separate SQLite files.
 
-## Start here
+## Start the app
 
-From the repository folder, start Docker Desktop and run:
+Open Command Prompt or PowerShell in the repository folder, then run:
 
-```powershell
+```text
 docker compose up --build -d
 docker compose ps
 ```
 
-Open <http://localhost:8080>. Choose a product, enter a quantity and a test email address, and place an order. No payment is collected and no email is sent. `docker compose ps` should show five running containers: storefront, product, order, inventory, and notification.
+Open <http://localhost:8080>. The five app containers are joined by two worker containers and the local event service. `events-setup` is a one-time setup container; it exits after creating the local event bus, rules, queues, and dead-letter queues.
 
-## What just happened?
+## Follow the event path
+
+In a second terminal at the same repository folder, run:
 
 ```text
-Browser
-  -> Storefront (Nginx on localhost:8080)
-  -> Order Service
-       -> Product Service: get the current product and price
-       -> its own SQLite database: save a PENDING order
-       -> Inventory Service: reserve the requested quantity
-            -> its own SQLite database: reduce available stock
-       -> its own SQLite database: mark CONFIRMED or REJECTED
-       -> Notification Service: record a receipt for a confirmed order
-            -> its own SQLite database: save the receipt record
-  <- order status shown in the browser
+docker compose logs -f --tail=0 storefront order inventory-worker order-worker
 ```
 
-The browser also asks Product for the catalog when the page opens. Only the storefront is published to your computer; the four backend services talk over Docker Compose's private network. Each service owns its own local data file. The email address is only stored in the demo order and receipt record.
+Place a test order in the browser. The page briefly shows that the order is pending, then checks the Order API until a worker updates it.
 
-**Important difference from the final design:** Today Order calls Inventory and Notification directly over HTTP and waits for their answers. There is no EventBridge, SQS, Lambda, RDS, DynamoDB, or ElastiCache in this local run. Those are future stages, not hidden behind the demo.
-
-## See the flow yourself
-
-In a second PowerShell terminal in this folder, watch the backend requests while placing an order in the browser:
-
-```powershell
-docker compose logs -f order product inventory notification
+```text
+Browser → Storefront → Order API → Order SQLite (PENDING)
+                                  → EventBridge: OrderCreated
+                                      → rule → inventory SQS queue
+                                          → Inventory worker polls queue
+                                              → Inventory SQLite reserves stock
+                                              → EventBridge: InventoryReserved/InventoryFailed
+                                                  → rule → order-results SQS queue
+                                                      → Order worker polls queue
+                                                          → Order SQLite (CONFIRMED/REJECTED)
+                                                          → Notification API records receipt if confirmed
+Browser ← Storefront ← GET order status ← Order API
 ```
 
-Press Ctrl+C to stop following logs; this does not stop the app. To check the stock for the coffee mug inside the private Inventory container:
+The log lines make each handoff visible. Look for `OrderCreated`, `InventoryReserved` or `InventoryFailed`, then the Order worker’s final status. SQS does not call the worker; the worker polls SQS. EventBridge matches the event type and sends it to the right queue.
 
-```powershell
+## See stock change
+
+Before and after an order, check coffee mug inventory from inside the Inventory container:
+
+```text
 docker compose exec inventory python -c "import urllib.request; print(urllib.request.urlopen('http://localhost:8000/inventory/coffee-mug').read().decode())"
 ```
 
-Run that stock command before and after buying a mug. You should see the available number decrease by the quantity ordered. For a failure example, try ordering more desk lamps than the available stock; the order should be `REJECTED` and stock should stay the same.
+One confirmed mug order reduces stock by one. To see the failure path, order 99 desk lamps. The final order should be `REJECTED`, and desk lamp stock should remain unchanged.
 
-You can also inspect the storefront's public API response:
+To view the setup messages that created the event infrastructure:
 
-```powershell
-Invoke-RestMethod http://localhost:8080/api/products
+```text
+docker compose logs events-setup
 ```
 
-## What comes next?
+## Which code does what?
 
-1. **Docker Compose** proves that the five containers and the customer flow work together locally. This step has been run successfully on this machine.
-2. **Local Kubernetes and Helm** will run the same five images as separate Deployments and internal Services. Helm fills in the values in `deploy/helm/retail/values.yaml` and sends ordinary Kubernetes manifests to the local cluster. The repo has a chart, but its live deployment has not yet been verified. Select a local Kubernetes context before using it; the machine also has an unrelated AKS context.
-3. **One local event flow** will replace one direct call with a producer, queue, and consumer so we can observe pending work, processing, retries, and failures. We will verify that behavior before choosing the AWS resources and permissions.
-4. **AWS and Terraform** come after the application paths and resource needs are clear.
+| Path | Role in this flow |
+| --- | --- |
+| `compose.yaml` | Starts the local AWS emulator, setup job, APIs, workers, and storefront |
+| `backend/services/order.py` | Saves the order and publishes `OrderCreated` |
+| `backend/services/messaging.py` | Creates AWS SDK clients, sends events, and polls/deletes SQS messages |
+| `backend/services/setup_local_events.py` | Creates the local event bus, EventBridge rules, SQS queues, and DLQs |
+| `backend/services/inventory_worker.py` | Consumes order events, reserves stock, publishes the result |
+| `backend/services/order_worker.py` | Consumes the inventory result and updates order status |
+| `backend/services/inventory.py` | Owns inventory data and the idempotent stock reservation |
+| `frontend/app.js` | Submits checkout and polls the Order API while the order is pending |
 
-To stop the local app, run `docker compose down`. Its named volumes keep the demo data. For a fresh demo dataset, run `docker compose down -v` and then start it again; `-v` deletes the local demo data.
+## Important limits and reset
+
+The EventBridge and SQS APIs are emulated locally by Moto; this is a learning environment, not AWS. Notification is still a direct service call and records a receipt only. The app uses fake local AWS credentials and the Compose-only `EVENTS_ENDPOINT_URL`; on AWS, the endpoint and credentials will come from AWS configuration and workload identity. Terraform will later create the real bus, rules, queues, DLQs, database resources, network paths, and permissions.
+
+Stop the app with `docker compose down`. Named volumes keep SQLite data. Starting the full Compose project again reruns `events-setup` and recreates the local bus and queues. Use `docker compose down -v` only if you also want to delete the local database data.

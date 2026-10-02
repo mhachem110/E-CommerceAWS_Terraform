@@ -9,13 +9,13 @@ The Docker Compose app has been run and verified locally. For a simple, step-by-
 ```text
 Browser → Storefront (Nginx, port 8080)
               ├── Product Service → local catalog database
-              └── Order Service → local orders database
-                     ├── Product Service (price lookup)
-                     ├── Inventory Service → local stock database
-                     └── Notification Service → local receipt record
+              └── Order Service → local orders database (PENDING)
+                     └── EventBridge → SQS → Inventory worker → local stock database
+                            └── EventBridge → SQS → Order worker → order database
+                                   └── Notification Service → local receipt record
 ```
 
-The Order Service saves a `PENDING` order, asks Inventory to reserve stock, then marks the order `CONFIRMED` or `REJECTED`. A confirmed order gets one notification record. The inventory reservation and notification are keyed by order ID, so a retry does not reserve the same stock twice or record a second receipt.
+The Order API returns while the order is `PENDING`. EventBridge routes `OrderCreated` to an SQS queue. The Inventory worker reserves stock and publishes either `InventoryReserved` or `InventoryFailed`; another EventBridge rule sends that result to the Order worker. The Order worker updates the order and asks Notification to record a receipt for confirmed orders. Workers acknowledge messages only after processing. Inventory reservations and notification records are keyed by order ID so retries do not repeat those effects.
 
 ## Run it
 
@@ -23,7 +23,7 @@ The Order Service saves a `PENDING` order, asks Inventory to reserve stock, then
 2. In this repository, run `docker compose up --build -d`.
 3. Open [http://localhost:8080](http://localhost:8080).
 4. Choose a product, enter a quantity and an email, and place a **test order**.
-5. To inspect service health, run `docker compose ps`. To see logs, run `docker compose logs -f order`.
+5. To inspect services, run `docker compose ps`. To watch queue processing, run `docker compose logs -f storefront order inventory-worker order-worker`.
 6. Stop with `docker compose down`. The named volumes keep the orders and stock for the next run. `docker compose down -v` removes this demo data and restores the initial catalog and stock on the next start.
 
 Only the storefront port is published. The four backend services communicate over the private Compose network. The browser reaches Product and Order through the storefront's `/api/` reverse proxy.
@@ -38,7 +38,7 @@ python -m venv .venv
 .venv\Scripts\python -m pytest -q
 ```
 
-The test starts all four real HTTP services on temporary local ports. It checks a confirmed order, stock reduction, the receipt record, repeated checkout, key conflict, and insufficient stock.
+The integration test starts all four HTTP APIs on temporary local ports in direct-call mode. It checks a confirmed order, stock reduction, the receipt record, repeated checkout, key conflict, and insufficient stock. The Docker Compose run exercises the separate EventBridge/SQS worker flow.
 
 ## Run the same app on local Kubernetes with Helm
 
@@ -70,12 +70,12 @@ The chart's `values.yaml` holds the images, port numbers, service addresses, res
 | `backend/services/notification.py` | Idempotent notification record API |
 | `compose.yaml` | Local containers, private network, and persistent demo data |
 | `deploy/helm/retail/` | Reusable local Kubernetes chart for the five workloads |
-| `docs/service-map.md` | Current service calls and planned AWS event, permission, and network paths |
+| `docs/service-map.md` | Current local event flow and planned AWS event, permission, and network paths |
 | `tests/` | End-to-end HTTP flow test |
 | `.github/workflows/app-ci.yml` | App tests and image builds on PRs; no Terraform apply |
 
 ## Scope of this first stage
 
-The four SQLite files are **local test substitutes**. No payment is collected and no actual email is sent. Order processing currently uses direct HTTP calls; it does not yet use EventBridge or SQS. The APIs have no customer authentication, so this is for local development only and must not be exposed publicly as a production shop.
+The four SQLite files are **local test substitutes**. Moto provides local EventBridge and SQS APIs; no AWS account or Terraform is used. Notification is a local receipt record, not a real email, and no payment is collected. The APIs have no customer authentication, so this is for local development only and must not be exposed publicly as a production shop.
 
-Next: run the chart on local Kubernetes, then prove the database/cache adapters and event consumers before provisioning AWS. The [service and ingress map](docs/service-map.md) now shows the exact order for EKS, the controller, and the public ALB. Product and Order will move to RDS/Aurora MySQL; Inventory and Notification to DynamoDB; Product will use ElastiCache; Order events will use EventBridge and SQS with retries and DLQs. App PRs run app checks, image builds, and Helm validation. Terraform changes have their own reviewed infrastructure workflow in a separately permissioned repository, and ordinary app releases do not run Terraform.
+Next: run the chart on local Kubernetes and make the event flow visible there, then prove the database/cache adapters before provisioning AWS. The [service and ingress map](docs/service-map.md) shows the planned EKS, ALB, data, event, and permissions paths. Product and Order will move to RDS/Aurora MySQL; Inventory and Notification to DynamoDB; Product will use ElastiCache. App PRs run app checks, image builds, and Helm validation. Terraform changes have their own reviewed infrastructure workflow in a separately permissioned repository, and ordinary app releases do not run Terraform.

@@ -11,10 +11,13 @@ import httpx
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
+from services.messaging import publish_event
+
 DB_PATH = Path(os.getenv("DB_PATH", "./order.db"))
 PRODUCT_URL = os.getenv("PRODUCT_URL", "http://localhost:8001")
 INVENTORY_URL = os.getenv("INVENTORY_URL", "http://localhost:8002")
 NOTIFICATION_URL = os.getenv("NOTIFICATION_URL", "http://localhost:8004")
+ORDER_FLOW = os.getenv("ORDER_FLOW", "sync")
 
 
 class Checkout(BaseModel):
@@ -136,7 +139,8 @@ def create_order(checkout: Checkout, idempotency_key: str | None = Header(defaul
             checkout.product_id, checkout.quantity, checkout.email
         ):
             raise HTTPException(409, "Idempotency key belongs to a different checkout")
-        return process_order(dict(existing))
+        existing_order = dict(existing)
+        return existing_order if ORDER_FLOW == "events" else process_order(existing_order)
 
     try:
         with httpx.Client(timeout=3) as client:
@@ -163,7 +167,18 @@ def create_order(checkout: Checkout, idempotency_key: str | None = Header(defaul
         row = connection.execute(
             "SELECT * FROM orders WHERE idempotency_key = ?", (key,)
         ).fetchone()
-    return process_order(dict(row))
+    order = dict(row)
+    if ORDER_FLOW == "events":
+        try:
+            publish_event(
+                "OrderCreated",
+                "retail.order",
+                {"order_id": order["id"], "product_id": order["product_id"], "quantity": order["quantity"]},
+            )
+            return update_order(order["id"], reason=None)
+        except Exception:
+            return update_order(order["id"], reason="Could not submit the inventory request; use retry")
+    return process_order(order)
 
 
 @app.get("/orders/{order_id}")
@@ -179,4 +194,15 @@ def retry_order(order_id: str):
     order = get_order_row(order_id)
     if order is None:
         raise HTTPException(404, "Order not found")
+    if ORDER_FLOW == "events":
+        if order["status"] == "PENDING":
+            publish_event(
+                "OrderCreated",
+                "retail.order",
+                {"order_id": order["id"], "product_id": order["product_id"], "quantity": order["quantity"]},
+            )
+            return update_order(order_id, reason=None)
+        if order["status"] == "CONFIRMED":
+            return send_notification(order)
+        return order
     return process_order(order)

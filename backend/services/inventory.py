@@ -55,6 +55,10 @@ def get_stock(product_id: str):
 
 @app.post("/inventory/reservations")
 def reserve(request: Reservation):
+    return reserve_stock(request)
+
+
+def reserve_stock(request: Reservation):
     with closing(connect()) as connection:
         connection.execute("BEGIN IMMEDIATE")
         existing = connection.execute(

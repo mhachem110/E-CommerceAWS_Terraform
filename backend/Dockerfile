@@ -11,7 +11,7 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && chown app:app /data
 
 ARG SERVICE
-COPY services/__init__.py services/__init__.py
+COPY services/ services/
 COPY services/${SERVICE}.py services/main.py
 USER app
 EXPOSE 8000
