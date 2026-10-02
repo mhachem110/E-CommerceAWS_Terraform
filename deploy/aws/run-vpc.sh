@@ -6,6 +6,16 @@ cluster_config="$(aws ssm get-parameter --name /retail-week3/dev/config --with-d
 cluster="$(jq -r '.cluster_name' <<<"$cluster_config")"
 region="$(jq -r '.region' <<<"$cluster_config")"
 aws eks update-kubeconfig --name "$cluster" --region "$region"
+for attempt in $(seq 1 24); do
+  if kubectl -n retail get serviceaccount default >/dev/null 2>&1; then
+    break
+  fi
+  if [[ "$attempt" -eq 24 ]]; then
+    echo "EKS namespace access was not ready after four minutes" >&2
+    exit 1
+  fi
+  sleep 10
+done
 
 if [[ "${DEPLOY_OPERATION:-deploy}" == "rollback" ]]; then
   helm -n retail rollback retail --wait --timeout 15m
