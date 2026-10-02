@@ -2,7 +2,7 @@
 
 A small ecommerce demo for the Week 3 EKS project. It has one storefront and four independent backend services. Docker Compose remains a learning/demo path. The `deploy/aws/` renderer, Helm chart, and GitHub Actions workflow now describe the AWS deployment, with infrastructure kept in the separate private `Retail-Platform-Infra` repository.
 
-The Docker Compose app has been run and verified locally. The AWS code has been validated but has not been applied to an account yet because AWS credentials are not configured on this machine. For the local order flow, read the [local walkthrough](docs/local-walkthrough.md).
+The Docker Compose app has been run and verified locally. The AWS code has been validated but has not been applied to an account yet. Cloud provisioning will use GitHub Actions OIDC after an AWS administrator creates the initial trust role; local AWS CLI sign-in is not part of this path. For the local order flow, read the [local walkthrough](docs/local-walkthrough.md).
 
 ## What happens when you place an order
 
@@ -78,7 +78,7 @@ The chart's `values.yaml` holds the images, port numbers, service addresses, res
 
 ## AWS deployment path
 
-The private infrastructure repository provisions the VPC, EKS, RDS MySQL, ElastiCache, DynamoDB, EventBridge, SQS, ECR, IAM, and supporting resources. Cloud engineers review and apply Terraform there. The app repo receives only a scoped GitHub OIDC role and a non-secret SSM deployment configuration. Merging an approved app PR to `main` builds five commit-tagged images and uses Helm to deploy them. Source code releases do **not** run Terraform.
+The private infrastructure repository provisions the VPC, EKS, RDS MySQL, ElastiCache, DynamoDB, EventBridge, SQS, ECR, IAM, and supporting resources. Cloud engineers review Terraform there and trigger its GitHub Actions workflow, which assumes a separate infrastructure role through OIDC. The app repo receives only a scoped GitHub OIDC deploy role and a non-secret SSM deployment configuration. Merging an approved app PR to `main` builds five commit-tagged images and uses Helm to deploy them. Source code releases do **not** run Terraform.
 
 On EKS, Product reads MySQL with a Redis cache, Order stores orders in a separate MySQL schema, Inventory uses DynamoDB transactions, and Notification records status updates in DynamoDB. Order, Inventory, and Notification workers consume their own SQS queues. The Storefront is the only workload behind the ALB; internal APIs use `ClusterIP` Services. The full [cloud service map](docs/service-map.md) shows each call and event. The GitHub workflow requires the `dev` environment variables `AWS_REGION` and `AWS_DEPLOY_ROLE_ARN` after the Terraform apply and platform setup.
 
@@ -88,4 +88,4 @@ The first cloud install runs a one-time Job to create scoped SQL users, two sche
 
 The four SQLite files are **local test substitutes**. Moto provides local EventBridge and SQS APIs; no AWS account or Terraform is used. Notification is a local receipt record, not a real email, and no payment is collected. The APIs have no customer authentication, so this is for local development only and must not be exposed publicly as a production shop.
 
-The cloud path has code and configuration, but no live AWS end-to-end proof yet. It does not process payments or send actual email. The first database bootstrap is not a general migration framework, and the order/event write path uses an explicit retry rather than a transactional outbox. Those are visible follow-up reliability tasks after the first cloud run. Terraform changes have their own reviewed workflow in the separate infrastructure repository.
+The cloud path has code and configuration, but no live AWS end-to-end proof yet. The initial AWS OIDC provider and infrastructure role still need one-time creation in the AWS Console. The EKS API currently accepts only an allowlisted IP, so a normal GitHub-hosted runner cannot perform the platform or app Helm installation until a VPC-connected runner or another reviewed network path is configured. It does not process payments or send actual email. The first database bootstrap is not a general migration framework, and the order/event write path uses an explicit retry rather than a transactional outbox. Those are visible follow-up reliability tasks after the first cloud run. Terraform changes have their own reviewed workflow in the separate infrastructure repository.
